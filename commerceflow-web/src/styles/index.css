@@ -1,0 +1,151 @@
+@import "tailwindcss";
+
+/* ============================================================
+   CommerceFlow Design System — Outdoor Premium Brand
+   Primary: Forest Green | Accent: Warm Orange | BG: Warm White
+   ============================================================ */
+
+@theme {
+  /* ── Master Brand Colors ── */
+  --color-brand-50:  #EEF5F1;
+  --color-brand-100: #d5e8dd;
+  --color-brand-200: #aed1bc;
+  --color-brand-300: #7db49a;
+  --color-brand-400: #4f977a;
+  --color-brand-500: #2a7a5c;
+  --color-brand-600: #1a5c42;
+  --color-brand-700: #17483B;
+  --color-brand-800: #123C32;
+  --color-brand-900: #0E332B;
+  --color-brand-950: #081d19;
+
+  /* ── Master Accent (Orange) ── */
+  --color-accent-50:  #fff7ed;
+  --color-accent-100: #ffedd5;
+  --color-accent-200: #fed7aa;
+  --color-accent-300: #fdba74;
+  --color-accent-400: #FF7A1A;
+  --color-accent-500: #F97316;
+  --color-accent-600: #ea6c00;
+  --color-accent-700: #c2570a;
+  --color-accent-800: #9a3f08;
+  --color-accent-900: #7c2d0a;
+
+  /* ── Master Surfaces ── */
+  --color-surface-bg:       #F7F6F1;
+  --color-surface-card:     #FFFFFF;
+  --color-surface-green:    #EEF5F1;
+  --color-surface-muted:    #F2F1EC;
+
+  /* ── Master Text ── */
+  --color-text-primary:     #17201D;
+  --color-text-secondary:   #3D4D46;
+  --color-text-muted:       #66736D;
+
+  /* ── Master Borders ── */
+  --color-border-subtle:    #E5E9E6;
+  --color-border-strong:    #CDD5CF;
+
+  /* ── Semantic Status ── */
+  --color-success-bg:       #F0FDF4;
+  --color-success-text:     #15803D;
+  --color-warning-bg:       #FFFBEB;
+  --color-warning-text:     #B45309;
+  --color-error-bg:         #FEF2F2;
+  --color-error-text:       #B91C1C;
+
+  /* ── Admin Control Panel Design Tokens (Outdoor SaaS Reference) ── */
+  --color-admin-sidebar-bg:      #F0FAF7;
+  --color-admin-sidebar-surface: #E6F5F0;
+  --color-admin-sidebar-active:  #D1FAE5;
+  --color-admin-sidebar-text:    #102A2A;
+  --color-admin-sidebar-muted:   #648096;
+  --color-admin-main-bg:         #F0FAF7;
+  --color-admin-card-bg:         #FFFFFF;
+  --color-admin-border:          #D8ECE7;
+  --color-admin-primary:         #063B32;
+  --color-admin-primary-hover:   #042822;
+  --color-admin-accent:          #059669;
+  --color-admin-accent-light:    #D1FAE5;
+}
+
+@layer base {
+  :root {
+    color-scheme: light;
+    --admin-sidebar-bg: #F0FAF7;
+    --admin-sidebar-surface: #E6F5F0;
+    --admin-sidebar-active: #D1FAE5;
+    --admin-sidebar-text: #102A2A;
+    --admin-sidebar-muted: #648096;
+    --admin-main-bg: #F0FAF7;
+    --admin-card-bg: #FFFFFF;
+    --admin-border: #D8ECE7;
+    --admin-primary: #063B32;
+    --admin-primary-hover: #042822;
+    --admin-accent: #059669;
+    --admin-accent-light: #D1FAE5;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    margin: 0;
+    background-color: #f7f6f1;
+    color: #17201d;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* ── Focus Rings — green brand ── */
+  a:focus-visible,
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible {
+    outline: 2px solid #17483b;
+    outline-offset: 2px;
+  }
+
+  /* ── Smooth image rendering ── */
+  img {
+    display: block;
+  }
+}
+
+@layer utilities {
+  /* Hero gradient overlay */
+  .hero-overlay {
+    background: linear-gradient(
+      90deg,
+      rgba(14, 51, 43, 0.82) 0%,
+      rgba(14, 51, 43, 0.60) 50%,
+      rgba(14, 51, 43, 0.20) 100%
+    );
+  }
+
+  /* Subtle card hover lift */
+  .card-hover {
+    transition: transform 150ms ease, box-shadow 150ms ease, border-color 150ms ease;
+  }
+  .card-hover:hover {
+    transform: translateY(-2px);
+  }
+
+  /* Line clamp utilities */
+  .line-clamp-1 { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; }
+  .line-clamp-2 { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .line-clamp-3 { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+
+  /* Scrollbar hide for horizontal scrollers */
+  .scrollbar-hide {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+}

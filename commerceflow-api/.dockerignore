@@ -1,0 +1,47 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Git metadata
+.git
+.gitignore
+
+# Dependencies
+node_modules
+
+# Test and coverage artifacts
+coverage
+.nyc_output
+test-results
+
+# Tests
+tests
+**/*.test.js
+**/*.spec.js
+
+# Development tooling
+.vscode
+.idea
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Temporary files
+tmp
+temp
+*.tmp
+
+# Documentation/source-control artifacts not required in runtime image
+.github
+
+# Local project artifacts
+*.local

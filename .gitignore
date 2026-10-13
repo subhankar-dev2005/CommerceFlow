@@ -1,0 +1,61 @@
+# Dependencies
+node_modules/
+
+# Environment files
+.env
+.env.*
+!.env.example
+!.env.production.example
+
+# Build and distribution outputs
+dist/
+dist-ssr/
+build/
+.next/
+out/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# Backups
+backups/
+*.backup
+*.bak
+*.env.backup
+*.env.bak
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+.idea/
+*.iml
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Temporary files
+tmp/
+temp/
+.cache/
+
+# Runtime files
+*.pid
+*.seed
+*.pid.lock
+
+# Local test scratch files
+razorpay-test.html

@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  backend:
+    name: Backend (API)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Start MongoDB Replica Set
+        run: |
+          docker run -d --name mongodb -p 27017:27017 mongo:7.0 --replSet rs0 --bind_ip_all
+          echo "Waiting for MongoDB daemon to accept connections..."
+          for i in {1..30}; do
+            if docker exec mongodb mongosh --quiet --eval "db.adminCommand({ ping: 1 })" >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          echo "Initiating replica set rs0..."
+          docker exec mongodb mongosh --quiet --eval 'rs.initiate({ _id: "rs0", members: [{ _id: 0, host: "127.0.0.1:27017" }] })'
+          echo "Waiting for replica set primary readiness (hello.isWritablePrimary === true)..."
+          READY=false
+          for i in {1..30}; do
+            IS_PRIMARY=$(docker exec mongodb mongosh --quiet --eval 'try { const res = db.adminCommand({ hello: 1 }); res.isWritablePrimary === true ? "true" : "false"; } catch(e) { "false"; }')
+            if [ "$IS_PRIMARY" = "true" ]; then
+              READY=true
+              echo "MongoDB replica set primary is ready."
+              break
+            fi
+            sleep 1
+          done
+          if [ "$READY" != "true" ]; then
+            echo "ERROR: MongoDB replica set failed readiness check (hello.isWritablePrimary === true)" >&2
+            exit 1
+          fi
+
+      - name: Run tests
+        env:
+          CI: true
+          NODE_ENV: test
+          MONGODB_URI: mongodb://127.0.0.1:27017/commerceflow_test?replicaSet=rs0
+          JWT_SECRET: "ci-test-jwt-secret-key-at-least-32-chars-long"
+          RAZORPAY_KEY_ID: "rzp_test_mock_key_id"
+          RAZORPAY_KEY_SECRET: "rzp_test_mock_key_secret"
+        run: npm test
+
+      - name: Dependency security audit
+        run: npm audit
