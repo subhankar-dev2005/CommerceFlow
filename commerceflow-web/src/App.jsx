@@ -52,6 +52,7 @@ const AdminBrandsPage = lazy(() => import('./pages/admin/AdminBrandsPage.jsx'));
 const AdminVendorsPage = lazy(() => import('./pages/admin/AdminVendorsPage.jsx'));
 const AdminSettingsPage = lazy(() => import('./pages/admin/AdminSettingsPage.jsx'));
 const AdminReportsPage = lazy(() => import('./pages/admin/AdminReportsPage.jsx'));
+const AdminBannersPage = lazy(() => import('./pages/admin/AdminBannersPage.jsx'));
 
 /**
  * Accessible fallback skeleton displayed while lazy route chunks load.
@@ -278,8 +279,11 @@ export default function App() {
       return <AdminAuditLogsPage search={search} />;
     }
     if (pathname === '/admin/reports') {
-      return <AdminReportsPage />;
-    }
+        return <AdminReportsPage />;
+      }
+      if (pathname === '/admin/banners') {
+        return <AdminBannersPage />;
+      }
 
     // Admin 404 fallback if nested admin route not matched
     if (pathname.startsWith('/admin')) {

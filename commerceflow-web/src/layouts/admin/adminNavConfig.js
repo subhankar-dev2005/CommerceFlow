@@ -164,6 +164,14 @@ export const ADMIN_NAV_SECTIONS = [
         status: 'functional',
         allowedRoles: ['admin'],
       },
+      {
+        id: 'banners',
+        label: 'Banner Management',
+        href: '/admin/banners',
+        icon: 'banners',
+        status: 'functional',
+        allowedRoles: ['admin'],
+      },
     ],
   },
 ];

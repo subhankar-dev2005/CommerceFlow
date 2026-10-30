@@ -18,6 +18,7 @@ import paymentRoutes from "../modules/payments/payment.routes.js";
 
 import recentlyViewedRoutes from "../modules/recently-viewed/recently-viewed.routes.js";
 import returnRoutes from "../modules/returns/return.routes.js";
+import bannerRoutes from "../modules/banners/banner.routes.js";
 
 const router = Router();
 
@@ -64,6 +65,11 @@ paymentRoutes
 router.use(
 "/recently-viewed",
 recentlyViewedRoutes
+);
+
+router.use(
+"/banners",
+bannerRoutes
 );
 
 router.use(

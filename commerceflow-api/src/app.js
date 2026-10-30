@@ -124,6 +124,9 @@ export function createApp({ corsOrigin = env.CORS_ORIGIN } = {}) {
           (req.method === "GET" && (
             path === "/api/v1/products" ||
             path === "/api/v1/products/categories" ||
+            path === "/api/v1/banners" ||
+            path === "/api/v1/banners/active" ||
+            path.startsWith("/api/v1/banners/images/") ||
             (path.startsWith("/api/v1/products/") && !path.includes("/reviews"))
           ))
         );
