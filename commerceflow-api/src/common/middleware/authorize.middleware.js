@@ -1,6 +1,12 @@
 import AppError from "../errors/app-error.js";
+import { ROLE_EXPANSIONS } from "../../config/roles.js";
 
 function authorize(...allowedRoles) {
+  // Precompute effective permitted roles via explicit declarative expansions
+  const effectiveRoles = new Set(
+    allowedRoles.flatMap((role) => ROLE_EXPANSIONS[role] || [role])
+  );
+
   return function (
     req,
     res,
@@ -18,7 +24,7 @@ function authorize(...allowedRoles) {
     }
 
     if (
-      !allowedRoles.includes(
+      !effectiveRoles.has(
         req.user.role
       )
     ) {

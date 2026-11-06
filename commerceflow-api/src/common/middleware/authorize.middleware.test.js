@@ -64,4 +64,58 @@ describe("authorize middleware", () => {
     expect(next).toHaveBeenCalledTimes(1);
     expect(next).toHaveBeenCalledWith();
   });
+
+  it("4. allows super_admin on ordinary admin gate via explicit expansion", () => {
+    const middleware = authorize("admin");
+    const req = {
+      user: {
+        _id: "507f1f77bcf86cd799439099",
+        role: "super_admin"
+      }
+    };
+    const res = {};
+    const next = vi.fn();
+
+    middleware(req, res, next);
+
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(next).toHaveBeenCalledWith();
+  });
+
+  it("5. strictly rejects ordinary admin on super_admin-only gate with 403 FORBIDDEN", () => {
+    const middleware = authorize("super_admin");
+    const req = {
+      user: {
+        _id: "507f1f77bcf86cd799439011",
+        role: "admin"
+      }
+    };
+    const res = {};
+    const next = vi.fn();
+
+    middleware(req, res, next);
+
+    expect(next).toHaveBeenCalledTimes(1);
+    const error = next.mock.calls[0][0];
+    expect(error).toBeInstanceOf(AppError);
+    expect(error.statusCode).toBe(403);
+    expect(error.code).toBe("FORBIDDEN");
+  });
+
+  it("6. allows super_admin on super_admin-only gate", () => {
+    const middleware = authorize("super_admin");
+    const req = {
+      user: {
+        _id: "507f1f77bcf86cd799439099",
+        role: "super_admin"
+      }
+    };
+    const res = {};
+    const next = vi.fn();
+
+    middleware(req, res, next);
+
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(next).toHaveBeenCalledWith();
+  });
 });
