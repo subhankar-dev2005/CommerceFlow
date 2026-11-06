@@ -53,6 +53,7 @@ const AdminVendorsPage = lazy(() => import('./pages/admin/AdminVendorsPage.jsx')
 const AdminSettingsPage = lazy(() => import('./pages/admin/AdminSettingsPage.jsx'));
 const AdminReportsPage = lazy(() => import('./pages/admin/AdminReportsPage.jsx'));
 const AdminBannersPage = lazy(() => import('./pages/admin/AdminBannersPage.jsx'));
+const AdminBulkImportPage = lazy(() => import('./pages/admin/AdminBulkImportPage.jsx'));
 
 /**
  * Accessible fallback skeleton displayed while lazy route chunks load.
@@ -221,6 +222,9 @@ export default function App() {
     }
     if (pathname === '/admin/products/new') {
       return <AdminProductCreatePage />;
+    }
+    if (pathname === '/admin/products/import') {
+      return <AdminBulkImportPage />;
     }
     const adminProductEditMatch = pathname.match(/^\/admin\/products\/([^/?#]+)\/edit$/);
     if (adminProductEditMatch) {
