@@ -11,6 +11,9 @@ import loginUser from "./login-user.controller.js";
 import adminLoginUser from "./admin-login-user.controller.js";
 import loginUserSchema from "./login-user.validator.js";
 import logoutUser from "./logout-user.controller.js";
+import logoutAllUser from "./logout-all.controller.js";
+import refreshToken from "./refresh-token.controller.js";
+import refreshCsrfMiddleware from "./refresh-csrf.middleware.js";
 
 import getProfile from "./profile.controller.js";
 import getMe from "./get-me.controller.js";
@@ -37,7 +40,8 @@ import {
 
 import {
   authRateLimitMiddleware,
-  registerRateLimitMiddleware
+  registerRateLimitMiddleware,
+  refreshRateLimitMiddleware
 } from "../../common/middleware/auth-rate-limit.middleware.js";
 const router = Router();
 
@@ -65,6 +69,19 @@ router.post(
 router.post(
   "/logout",
   logoutUser
+);
+
+router.post(
+  "/logout-all",
+  authMiddleware,
+  logoutAllUser
+);
+
+router.post(
+  "/refresh",
+  refreshRateLimitMiddleware,
+  refreshCsrfMiddleware,
+  refreshToken
 );
 
 router.get(

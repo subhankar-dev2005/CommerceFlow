@@ -251,6 +251,39 @@ describe("Production Admin Authentication Security & Routing Integration Tests",
       expect(res.body.success).toBe(false);
       expect(res.body.error.code).toBe("VALIDATION_ERROR");
     });
+
+    it("8b. super_admin login succeeds with valid credentials and sets super_admin role", async () => {
+      const superAdminId = "507f1f77bcf86cd799439099";
+      const superAdminEmail = "superadmin@example.com";
+      const mockSuperAdmin = {
+        _id: superAdminId,
+        name: "Super Administrator",
+        email: superAdminEmail,
+        password: "hashed-super-password",
+        role: "super_admin",
+        isActive: true,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      };
+
+      vi.spyOn(User, "findOne").mockReturnValue({
+        select: vi.fn().mockResolvedValue(mockSuperAdmin)
+      });
+      vi.spyOn(bcrypt, "compare").mockResolvedValue(true);
+
+      const res = await request(app)
+        .post("/api/v1/users/admin/login")
+        .send({
+          email: superAdminEmail,
+          password: "SuperPassword123!"
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.message).toBe("Admin logged in successfully");
+      expect(res.body.data.user.role).toBe("super_admin");
+      expect(res.body.data.user.email).toBe(superAdminEmail);
+    });
   });
 
   describe("9-13. Rate Limiting & Registration Isolation", () => {

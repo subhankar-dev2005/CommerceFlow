@@ -104,8 +104,8 @@ describe("loginUser", () => {
     expect(jsonPayload.data.token).toBeUndefined();
     expect(jsonPayload.data.accessToken).toBeUndefined();
 
-    // JWT must be delivered via HttpOnly cookie, not response body
-    expect(res.cookie).toHaveBeenCalledTimes(1);
+    // Auth and refresh tokens must be delivered via HttpOnly cookies, not response body
+    expect(res.cookie).toHaveBeenCalledTimes(2);
     const [cookieName, cookieValue, cookieOptions] = res.cookie.mock.calls[0];
     expect(cookieName).toBe("auth_token");
     expect(cookieValue).toBe("test-jwt-token");
@@ -113,6 +113,11 @@ describe("loginUser", () => {
     expect(cookieOptions.sameSite).toBe("lax");
     expect(cookieOptions.path).toBe("/");
     expect(cookieOptions.maxAge).toBeGreaterThan(0);
+
+    const [refreshCookieName, , refreshCookieOptions] = res.cookie.mock.calls[1];
+    expect(refreshCookieName).toBe("refresh_token");
+    expect(refreshCookieOptions.httpOnly).toBe(true);
+    expect(refreshCookieOptions.sameSite).toBe("lax");
 
     expect(next).not.toHaveBeenCalled();
   });
@@ -264,12 +269,16 @@ describe("loginUser", () => {
     expect(adminJsonPayload.data.token).toBeUndefined();
     expect(adminJsonPayload.data.accessToken).toBeUndefined();
 
-    // JWT delivered via HttpOnly cookie only
-    expect(res.cookie).toHaveBeenCalledTimes(1);
+    // Auth and refresh tokens delivered via HttpOnly cookies only
+    expect(res.cookie).toHaveBeenCalledTimes(2);
     const [adminCookieName, adminCookieValue, adminCookieOptions] = res.cookie.mock.calls[0];
     expect(adminCookieName).toBe("auth_token");
     expect(adminCookieValue).toBe("test-admin-jwt-token");
     expect(adminCookieOptions.httpOnly).toBe(true);
+
+    const [adminRefreshCookieName, , adminRefreshCookieOptions] = res.cookie.mock.calls[1];
+    expect(adminRefreshCookieName).toBe("refresh_token");
+    expect(adminRefreshCookieOptions.httpOnly).toBe(true);
 
     expect(next).not.toHaveBeenCalled();
   });

@@ -3,6 +3,8 @@ import bcrypt from "bcryptjs";
 
 import User from "./user.model.js";
 import AppError from "../../common/errors/app-error.js";
+import { clearAuthCookie, clearRefreshCookie } from "../../config/cookie.js";
+import { revokeAllUserTokens } from "./refresh-token.service.js";
 
 async function changePassword(req, res, next) {
   try {
@@ -42,8 +44,16 @@ async function changePassword(req, res, next) {
       await bcrypt.hash(newPassword, 12);
 
     user.password = hashedPassword;
+    user.tokenVersion = (user.tokenVersion ?? 0) + 1;
 
     await user.save();
+
+    // Invalidate all active refresh tokens in MongoDB
+    await revokeAllUserTokens(user._id);
+
+    // Clear session cookies so user signs in cleanly with the new password
+    clearAuthCookie(res);
+    clearRefreshCookie(res);
 
     return res.status(200).json({
       success: true,
