@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import Product from "./product.model.js";
 import AppError from "../../common/errors/app-error.js";
 import { recordAdminAuditEvent, AUDIT_EVENT_TYPES } from "../audit/admin-audit.service.js";
@@ -13,7 +14,10 @@ async function deleteProduct(
     const product =
       await Product.findByIdAndUpdate(
         id,
-        { isActive: false },
+        {
+          isActive: false,
+          changeToken: new mongoose.Types.ObjectId().toHexString()
+        },
         { new: true }
       );
 

@@ -212,7 +212,10 @@ describe("Admin Product Controller Unit Tests", () => {
 
       expect(Product.findByIdAndUpdate).toHaveBeenCalledWith(
         "507f1f77bcf86cd799439011",
-        { isActive: false },
+        {
+          isActive: false,
+          changeToken: expect.stringMatching(/^[0-9a-fA-F]{24}$/)
+        },
         { new: true, runValidators: true }
       );
       expect(res.status).toHaveBeenCalledWith(200);
