@@ -19,11 +19,15 @@ import updateProduct from "./update-product.controller.js";
 import updateProductSchema from "./update-product.validator.js";
 import deleteProduct from "./delete-product.controller.js";
 import { productIdSchema } from "./product.routes.js";
+import bulkImportRoutes from "./bulk-import/bulk-import.routes.js";
 
 const router = Router();
 
 // Protect all admin product routes with auth and admin role authorization
 router.use(authMiddleware, authorize("admin"));
+
+// Bulk product import operations (template, preview, confirm, error report)
+router.use("/import", bulkImportRoutes);
 
 // List products across entire catalog with admin filters
 router.get("/", validate(getAdminProductsSchema), getAdminProducts);
