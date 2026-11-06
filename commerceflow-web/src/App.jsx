@@ -52,6 +52,7 @@ const AdminBrandsPage = lazy(() => import('./pages/admin/AdminBrandsPage.jsx'));
 const AdminVendorsPage = lazy(() => import('./pages/admin/AdminVendorsPage.jsx'));
 const AdminSettingsPage = lazy(() => import('./pages/admin/AdminSettingsPage.jsx'));
 const AdminReportsPage = lazy(() => import('./pages/admin/AdminReportsPage.jsx'));
+const AdminCouponsPage = lazy(() => import('./pages/admin/AdminCouponsPage.jsx'));
 const AdminBannersPage = lazy(() => import('./pages/admin/AdminBannersPage.jsx'));
 const AdminBulkImportPage = lazy(() => import('./pages/admin/AdminBulkImportPage.jsx'));
 
@@ -261,6 +262,9 @@ export default function App() {
     }
     if (pathname === '/admin/refunds') {
       return <AdminRefundsPage search={search} />;
+    }
+    if (pathname === '/admin/coupons') {
+      return <AdminCouponsPage search={search} />;
     }
     if (pathname === '/admin/users') {
       return <AdminUsersPage search={search} />;

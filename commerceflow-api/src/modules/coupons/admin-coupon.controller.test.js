@@ -52,6 +52,37 @@ describe("Admin Coupon Controller & Routes Tests", () => {
       expect(res.body.success).toBe(false);
       expect(res.body.error.code).toBe("FORBIDDEN");
     });
+
+    it("permits super_admin requests on GET /api/v1/admin/coupons", async () => {
+      const superAdminUserId = "507f1f77bcf86cd799439003";
+      const superAdminToken = generateToken({
+        userId: superAdminUserId,
+        role: "super_admin"
+      });
+
+      vi.spyOn(User, "findById").mockResolvedValue({
+        _id: superAdminUserId,
+        email: "superadmin@example.com",
+        role: "super_admin",
+        isActive: true
+      });
+      vi.spyOn(Coupon, "find").mockReturnValue({
+        select: vi.fn().mockReturnThis(),
+        sort: vi.fn().mockReturnThis(),
+        skip: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockReturnThis(),
+        lean: vi.fn().mockResolvedValue([])
+      });
+      vi.spyOn(Coupon, "countDocuments").mockResolvedValue(0);
+
+      const res = await request(app)
+        .get("/api/v1/admin/coupons")
+        .set("Authorization", `Bearer ${superAdminToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.coupons).toEqual([]);
+    });
   });
 
   describe("POST /api/v1/admin/coupons", () => {
