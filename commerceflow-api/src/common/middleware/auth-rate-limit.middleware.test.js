@@ -2,7 +2,8 @@ import { describe, it, expect, vi } from "vitest";
 import {
   normalizeClientIp,
   generateRateLimitKey,
-  authRateLimitMiddleware
+  authRateLimitMiddleware,
+  refreshRateLimitMiddleware
 } from "./auth-rate-limit.middleware.js";
 
 describe("Rate Limiter IP Normalization and Key Generation", () => {
@@ -79,6 +80,25 @@ describe("Rate Limiter IP Normalization and Key Generation", () => {
       // Verify that calling resetKey("::1") successfully clears the 127.0.0.1 store key
       authRateLimitMiddleware.resetKey("::1");
       const keyData = await authRateLimitMiddleware.getKey("127.0.0.1");
+      expect(keyData).toBeUndefined();
+    });
+  });
+
+  describe("refreshRateLimitMiddleware.resetKey", () => {
+    it("resets loopback rate limit hits for refresh limiter even when called with ::1", async () => {
+      const req = {
+        ip: "::1",
+        headers: {},
+        app: { get: vi.fn().mockReturnValue(false) }
+      };
+      const res = { setHeader: vi.fn(), getHeader: vi.fn() };
+      const next = vi.fn();
+
+      await refreshRateLimitMiddleware(req, res, next);
+      expect(next).toHaveBeenCalledTimes(1);
+
+      refreshRateLimitMiddleware.resetKey("::1");
+      const keyData = await refreshRateLimitMiddleware.getKey("127.0.0.1");
       expect(keyData).toBeUndefined();
     });
   });

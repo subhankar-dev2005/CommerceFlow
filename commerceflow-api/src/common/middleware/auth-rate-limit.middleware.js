@@ -61,6 +61,37 @@ authRateLimitMiddleware.resetKey = (key) => {
   }
 };
 
+/**
+ * Dedicated rate limiter for session refresh (/users/refresh).
+ * Decoupled from login endpoints to prevent shared NAT/office networks or
+ * multi-tab refresh operations from prematurely exhausting the strict login limit.
+ * Allows 60 requests per 15 minutes (~4/min) per IP.
+ */
+export const refreshRateLimitMiddleware = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 60,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  keyGenerator: generateRateLimitKey,
+  message: {
+    success: false,
+    error: {
+      code: "RATE_LIMIT_EXCEEDED",
+      message: "Too many session refresh attempts. Please try again later.",
+      details: []
+    }
+  }
+});
+
+const originalRefreshResetKey = refreshRateLimitMiddleware.resetKey;
+refreshRateLimitMiddleware.resetKey = (key) => {
+  originalRefreshResetKey(key);
+  const normalized = normalizeClientIp(key);
+  if (normalized !== key) {
+    originalRefreshResetKey(normalized);
+  }
+};
+
 export const registerRateLimitMiddleware = rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: 10,

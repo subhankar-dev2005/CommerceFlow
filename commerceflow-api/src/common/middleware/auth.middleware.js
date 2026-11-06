@@ -76,6 +76,17 @@ async function authMiddleware(
       );
     }
 
+    const userVersion = user.tokenVersion ?? 0;
+    const tokenVersion = decoded.tokenVersion ?? 0;
+    if (tokenVersion !== userVersion) {
+      throw new AppError(
+        "Authentication token has been revoked",
+        401,
+        [],
+        "AUTH_TOKEN_REVOKED"
+      );
+    }
+
     req.user = user;
 
     next();
