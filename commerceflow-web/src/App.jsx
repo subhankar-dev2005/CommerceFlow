@@ -54,6 +54,7 @@ const AdminSettingsPage = lazy(() => import('./pages/admin/AdminSettingsPage.jsx
 const AdminReportsPage = lazy(() => import('./pages/admin/AdminReportsPage.jsx'));
 const AdminCouponsPage = lazy(() => import('./pages/admin/AdminCouponsPage.jsx'));
 const AdminBannersPage = lazy(() => import('./pages/admin/AdminBannersPage.jsx'));
+const AdminCampaignsPage = lazy(() => import('./pages/admin/AdminCampaignsPage.jsx'));
 const AdminBulkImportPage = lazy(() => import('./pages/admin/AdminBulkImportPage.jsx'));
 
 /**
@@ -291,6 +292,9 @@ export default function App() {
       }
       if (pathname === '/admin/banners') {
         return <AdminBannersPage />;
+      }
+      if (pathname === '/admin/campaigns' || pathname === '/admin/promotions') {
+        return <AdminCampaignsPage />;
       }
 
     // Admin 404 fallback if nested admin route not matched
