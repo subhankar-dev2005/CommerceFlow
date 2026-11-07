@@ -229,6 +229,74 @@ describe('AdminBannersPage Integration Tests', () => {
     }
   });
 
+  it('resolves relative banner image storage paths to absolute API URLs on rendered cards', async () => {
+    function findElement(node, predicate) {
+      if (!node) return null;
+      if (predicate(node)) return node;
+      for (const child of node.childNodes || []) {
+        const found = findElement(child, predicate);
+        if (found) return found;
+      }
+      return null;
+    }
+
+    const originalGet = adminBannerService.getAdminBanners;
+    adminBannerService.getAdminBanners = async () => ({
+      banners: [
+        {
+          _id: 'ban_winter_sale',
+          id: 'ban_winter_sale',
+          title: 'Winter Sale',
+          heading: 'Winter sale is live now',
+          subtitle: '50% off',
+          buttonLabel: 'Explore Collection',
+          placement: 'hero_carousel',
+          imageUrl: '/api/v1/banners/images/banner-desktop-1793613727628-88931d1b136fbc11.png',
+          desktopImage: '/api/v1/banners/images/banner-desktop-1793613727628-88931d1b136fbc11.png',
+          altText: 'Winter sale promotional banner',
+          destinationType: 'custom_internal',
+          destination: '/shop',
+          targetUrl: '/shop',
+          position: 1,
+          displayOrder: 1,
+          status: 'published'
+        }
+      ],
+      pagination: { totalBanners: 1, totalPages: 1 }
+    });
+
+    try {
+      const rootEl = mockDoc.createElement('div');
+      const root = createRoot(rootEl);
+
+      await act(async () => {
+        root.render(<AdminBannersPage />);
+      });
+
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      });
+
+      const text = rootEl.textContent;
+      assert.ok(text.includes('Winter Sale'));
+      assert.ok(text.includes('Winter sale is live now'));
+
+      const img = findElement(rootEl, (el) => el.tagName === 'IMG');
+      assert.ok(img, 'Banner card must render an <img> tag');
+      const src = img.getAttribute('src');
+      assert.ok(
+        src && src.startsWith('http') && src.includes('/api/v1/banners/images/banner-desktop-1793613727628-88931d1b136fbc11.png'),
+        `Image src must resolve to absolute backend API URL, received: ${src}`
+      );
+
+      await act(async () => {
+        root.unmount();
+      });
+    } finally {
+      adminBannerService.getAdminBanners = originalGet;
+    }
+  });
+
   it('renders empty state when no banners exist', async () => {
     const originalGet = adminBannerService.getAdminBanners;
     adminBannerService.getAdminBanners = async () => ({

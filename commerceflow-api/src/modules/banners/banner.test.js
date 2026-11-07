@@ -736,5 +736,159 @@ describe("Banner Module Unit Tests", () => {
       expect(adminRes.headers["ratelimit"]).toContain("limit=100");
       expect(adminRes.headers["ratelimit"]).toContain("remaining=99");
     });
+
+    it("serves banner images from /api/v1/admin/banners/images/:filename without requiring admin session", async () => {
+      vi.spyOn(bannerStorage, "getBannerFilePathSafe").mockReturnValue(null);
+      const res = await request(app).get("/api/v1/admin/banners/images/banner-test.png");
+      // Reaches serveBannerImage and returns 404 BANNER_IMAGE_NOT_FOUND, NOT 401 AUTH_TOKEN_REQUIRED
+      expect(res.status).toBe(404);
+      expect(res.body.error.code).toBe("BANNER_IMAGE_NOT_FOUND");
+    });
+
+    it("admin management endpoint GET /api/v1/admin/banners strictly rejects unauthenticated requests with 401", async () => {
+      const adminRes = await request(app).get("/api/v1/admin/banners");
+      expect(adminRes.status).toBe(401);
+      expect(adminRes.body.error.code).toBe("AUTH_TOKEN_REQUIRED");
+    });
+  });
+
+  describe("Banner Image Upload Policy and Payload Sizing Tests", () => {
+    let app;
+
+    beforeEach(() => {
+      vi.restoreAllMocks();
+      app = createApp();
+    });
+
+    it("accepts valid banner creation with base64 desktop image within 5MB limit", async () => {
+      const bannerInput = {
+        title: "Valid Upload Banner",
+        placement: "hero_carousel",
+        desktopImage: `data:image/png;base64,${VALID_PNG_BUFFER.toString("base64")}`,
+        altText: "Valid Upload Alt",
+        targetUrl: "/shop",
+        displayOrder: 1,
+        status: "published"
+      };
+
+      vi.spyOn(bannerStorage, "saveBannerImageFile").mockResolvedValue({
+        filename: "saved-banner.png",
+        relativeUrl: "/api/v1/banners/images/saved-banner.png"
+      });
+
+      const fakeCreatedBanner = {
+        _id: "ban_created_123",
+        title: bannerInput.title,
+        placement: bannerInput.placement,
+        imageUrl: "/api/v1/banners/images/saved-banner.png",
+        desktopImage: "/api/v1/banners/images/saved-banner.png",
+        desktopImageStorageKey: "saved-banner.png",
+        createdBy: req.user._id
+      };
+      vi.spyOn(Banner, "create").mockResolvedValue(fakeCreatedBanner);
+
+      req.body = bannerInput;
+      await createBanner(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(201);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: true,
+          data: { banner: fakeCreatedBanner }
+        })
+      );
+      expect(bannerStorage.saveBannerImageFile).toHaveBeenCalled();
+    });
+
+    it("rejects oversized image (> 5MB) with clear IMAGE_OVERSIZED 400 error", async () => {
+      const hugeBuffer = Buffer.alloc(5.5 * 1024 * 1024);
+      hugeBuffer[0] = 0x89;
+      hugeBuffer[1] = 0x50;
+      hugeBuffer[2] = 0x4e;
+      hugeBuffer[3] = 0x47;
+
+      req.body = {
+        title: "Oversized Banner",
+        placement: "hero_carousel",
+        desktopImage: `data:image/png;base64,${hugeBuffer.toString("base64")}`,
+        altText: "Oversized Alt",
+        targetUrl: "/shop"
+      };
+
+      await createBanner(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(
+        expect.objectContaining({
+          statusCode: 400,
+          code: "IMAGE_OVERSIZED",
+          message: expect.stringMatching(/File size exceeds the 5MB limit/)
+        })
+      );
+    });
+
+    it("rejects unsupported SVG image format with clear UNSUPPORTED_IMAGE_FORMAT 400 error", async () => {
+      const svgBuffer = Buffer.from("<svg xmlns='http://www.w3.org/2000/svg'><circle r='10'/></svg>");
+
+      req.body = {
+        title: "SVG Banner",
+        placement: "hero_carousel",
+        desktopImage: `data:image/svg+xml;base64,${svgBuffer.toString("base64")}`,
+        altText: "SVG Alt",
+        targetUrl: "/shop"
+      };
+
+      await createBanner(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(
+        expect.objectContaining({
+          statusCode: 400,
+          code: "UNSUPPORTED_IMAGE_FORMAT",
+          message: expect.stringMatching(/SVG images are not permitted/)
+        })
+      );
+    });
+
+    it("rejects requests exceeding route body parser limit (> 10MB) with 413 PAYLOAD_TOO_LARGE", async () => {
+      const massivePayload = JSON.stringify({
+        image: "a".repeat(11 * 1024 * 1024)
+      });
+
+      const response = await request(app)
+        .post("/api/v1/admin/banners/507f1f77bcf86cd799439011/desktop-image")
+        .set("Content-Type", "application/json")
+        .send(massivePayload);
+
+      expect(response.status).toBe(413);
+      expect(response.body).toEqual(
+        expect.objectContaining({
+          success: false,
+          error: expect.objectContaining({
+            code: "PAYLOAD_TOO_LARGE"
+          })
+        })
+      );
+    });
+
+    it("strictly preserves 5MB parser limit on non-banner routes (rejecting > 5MB with 413)", async () => {
+      const nonBannerPayload = JSON.stringify({
+        email: "test@example.com",
+        password: "p".repeat(6 * 1024 * 1024)
+      });
+
+      const response = await request(app)
+        .post("/api/v1/users/login")
+        .set("Content-Type", "application/json")
+        .send(nonBannerPayload);
+
+      expect(response.status).toBe(413);
+      expect(response.body).toEqual(
+        expect.objectContaining({
+          success: false,
+          error: expect.objectContaining({
+            code: "PAYLOAD_TOO_LARGE"
+          })
+        })
+      );
+    });
   });
 });

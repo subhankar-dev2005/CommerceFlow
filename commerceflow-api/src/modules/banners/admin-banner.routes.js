@@ -11,7 +11,8 @@ import {
   reorderBanners,
   uploadDesktopImage,
   uploadMobileImage,
-  deleteBanner
+  deleteBanner,
+  serveBannerImage
 } from "./banner.controller.js";
 import {
   getAdminBannersSchema,
@@ -20,10 +21,14 @@ import {
   updateBannerSchema,
   updateBannerStatusSchema,
   reorderBannersSchema,
-  uploadBannerImageSchema
+  uploadBannerImageSchema,
+  bannerFilenameParamSchema
 } from "./banner.validator.js";
 
 const router = Router();
+
+// Public banner image delivery endpoint (accessible without admin session for static img tags)
+router.get("/images/:filename", validate(bannerFilenameParamSchema), serveBannerImage);
 
 // Protect all admin banner endpoints with authentication and admin role authorization
 router.use(authMiddleware);

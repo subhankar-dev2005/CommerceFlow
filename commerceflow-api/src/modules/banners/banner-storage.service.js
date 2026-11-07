@@ -243,4 +243,3 @@ export function getBannerFilePathSafe(filename) {
 
   return null;
 }
-

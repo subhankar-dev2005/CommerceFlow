@@ -242,16 +242,50 @@ export async function createBanner(req, res, next) {
       updatedBy: req.user?._id || null
     };
 
-    if (bannerData.desktopImage && !bannerData.imageUrl) {
-      bannerData.imageUrl = bannerData.desktopImage;
-    } else if (bannerData.imageUrl && !bannerData.desktopImage) {
-      bannerData.desktopImage = bannerData.imageUrl;
+    // If desktop image payload is base64, parse, validate buffer, and save to storage
+    if (bannerData.desktopImage && (bannerData.desktopImage.startsWith("data:") || bannerData.desktopImage.length > 1000)) {
+      const { buffer } = parseBannerImagePayload(bannerData.desktopImage);
+      const { extension } = validateBannerImageBuffer(buffer);
+      const { filename, relativeUrl } = await saveBannerImageFile(buffer, extension, "desktop");
+      bannerData.imageUrl = relativeUrl;
+      bannerData.desktopImage = relativeUrl;
+      bannerData.desktopImageStorageKey = filename;
+    } else if (bannerData.imageUrl && (bannerData.imageUrl.startsWith("data:") || bannerData.imageUrl.length > 1000)) {
+      const { buffer } = parseBannerImagePayload(bannerData.imageUrl);
+      const { extension } = validateBannerImageBuffer(buffer);
+      const { filename, relativeUrl } = await saveBannerImageFile(buffer, extension, "desktop");
+      bannerData.imageUrl = relativeUrl;
+      bannerData.desktopImage = relativeUrl;
+      bannerData.desktopImageStorageKey = filename;
+    } else {
+      if (bannerData.desktopImage && !bannerData.imageUrl) {
+        bannerData.imageUrl = bannerData.desktopImage;
+      } else if (bannerData.imageUrl && !bannerData.desktopImage) {
+        bannerData.desktopImage = bannerData.imageUrl;
+      }
     }
 
-    if (bannerData.mobileImage && !bannerData.mobileImageUrl) {
-      bannerData.mobileImageUrl = bannerData.mobileImage;
-    } else if (bannerData.mobileImageUrl && !bannerData.mobileImage) {
-      bannerData.mobileImage = bannerData.mobileImageUrl;
+    // If mobile image payload is base64, parse, validate buffer, and save to storage
+    if (bannerData.mobileImage && (bannerData.mobileImage.startsWith("data:") || bannerData.mobileImage.length > 1000)) {
+      const { buffer } = parseBannerImagePayload(bannerData.mobileImage);
+      const { extension } = validateBannerImageBuffer(buffer);
+      const { filename, relativeUrl } = await saveBannerImageFile(buffer, extension, "mobile");
+      bannerData.mobileImageUrl = relativeUrl;
+      bannerData.mobileImage = relativeUrl;
+      bannerData.mobileImageStorageKey = filename;
+    } else if (bannerData.mobileImageUrl && (bannerData.mobileImageUrl.startsWith("data:") || bannerData.mobileImageUrl.length > 1000)) {
+      const { buffer } = parseBannerImagePayload(bannerData.mobileImageUrl);
+      const { extension } = validateBannerImageBuffer(buffer);
+      const { filename, relativeUrl } = await saveBannerImageFile(buffer, extension, "mobile");
+      bannerData.mobileImageUrl = relativeUrl;
+      bannerData.mobileImage = relativeUrl;
+      bannerData.mobileImageStorageKey = filename;
+    } else {
+      if (bannerData.mobileImage && !bannerData.mobileImageUrl) {
+        bannerData.mobileImageUrl = bannerData.mobileImage;
+      } else if (bannerData.mobileImageUrl && !bannerData.mobileImage) {
+        bannerData.mobileImage = bannerData.mobileImageUrl;
+      }
     }
 
     if (bannerData.destination && !bannerData.targetUrl) {
@@ -299,22 +333,77 @@ export async function createBanner(req, res, next) {
 export async function updateBanner(req, res, next) {
   try {
     const { id } = req.params;
+    const existingBanner = await Banner.findById(id);
+
+    if (!existingBanner) {
+      throw new AppError("Banner not found", 404, [], "BANNER_NOT_FOUND");
+    }
 
     const updateData = {
       ...req.body,
       updatedBy: req.user?._id || null
     };
 
-    if (updateData.desktopImage && !updateData.imageUrl) {
-      updateData.imageUrl = updateData.desktopImage;
-    } else if (updateData.imageUrl && !updateData.desktopImage) {
-      updateData.desktopImage = updateData.imageUrl;
+    // If updating desktop image with base64 payload
+    if (updateData.desktopImage && (updateData.desktopImage.startsWith("data:") || updateData.desktopImage.length > 1000)) {
+      const { buffer } = parseBannerImagePayload(updateData.desktopImage);
+      const { extension } = validateBannerImageBuffer(buffer);
+      const { filename, relativeUrl } = await saveBannerImageFile(buffer, extension, "desktop");
+      const previousKey = existingBanner.desktopImageStorageKey;
+      updateData.imageUrl = relativeUrl;
+      updateData.desktopImage = relativeUrl;
+      updateData.desktopImageStorageKey = filename;
+      if (previousKey && previousKey !== filename) {
+        await deleteBannerFileSafe(previousKey);
+      }
+    } else if (updateData.imageUrl && (updateData.imageUrl.startsWith("data:") || updateData.imageUrl.length > 1000)) {
+      const { buffer } = parseBannerImagePayload(updateData.imageUrl);
+      const { extension } = validateBannerImageBuffer(buffer);
+      const { filename, relativeUrl } = await saveBannerImageFile(buffer, extension, "desktop");
+      const previousKey = existingBanner.desktopImageStorageKey;
+      updateData.imageUrl = relativeUrl;
+      updateData.desktopImage = relativeUrl;
+      updateData.desktopImageStorageKey = filename;
+      if (previousKey && previousKey !== filename) {
+        await deleteBannerFileSafe(previousKey);
+      }
+    } else {
+      if (updateData.desktopImage && !updateData.imageUrl) {
+        updateData.imageUrl = updateData.desktopImage;
+      } else if (updateData.imageUrl && !updateData.desktopImage) {
+        updateData.desktopImage = updateData.imageUrl;
+      }
     }
 
-    if (updateData.mobileImage && !updateData.mobileImageUrl) {
-      updateData.mobileImageUrl = updateData.mobileImage;
-    } else if (updateData.mobileImageUrl && !updateData.mobileImage) {
-      updateData.mobileImage = updateData.mobileImageUrl;
+    // If updating mobile image with base64 payload
+    if (updateData.mobileImage && (updateData.mobileImage.startsWith("data:") || updateData.mobileImage.length > 1000)) {
+      const { buffer } = parseBannerImagePayload(updateData.mobileImage);
+      const { extension } = validateBannerImageBuffer(buffer);
+      const { filename, relativeUrl } = await saveBannerImageFile(buffer, extension, "mobile");
+      const previousKey = existingBanner.mobileImageStorageKey;
+      updateData.mobileImageUrl = relativeUrl;
+      updateData.mobileImage = relativeUrl;
+      updateData.mobileImageStorageKey = filename;
+      if (previousKey && previousKey !== filename) {
+        await deleteBannerFileSafe(previousKey);
+      }
+    } else if (updateData.mobileImageUrl && (updateData.mobileImageUrl.startsWith("data:") || updateData.mobileImageUrl.length > 1000)) {
+      const { buffer } = parseBannerImagePayload(updateData.mobileImageUrl);
+      const { extension } = validateBannerImageBuffer(buffer);
+      const { filename, relativeUrl } = await saveBannerImageFile(buffer, extension, "mobile");
+      const previousKey = existingBanner.mobileImageStorageKey;
+      updateData.mobileImageUrl = relativeUrl;
+      updateData.mobileImage = relativeUrl;
+      updateData.mobileImageStorageKey = filename;
+      if (previousKey && previousKey !== filename) {
+        await deleteBannerFileSafe(previousKey);
+      }
+    } else {
+      if (updateData.mobileImage && !updateData.mobileImageUrl) {
+        updateData.mobileImageUrl = updateData.mobileImage;
+      } else if (updateData.mobileImageUrl && !updateData.mobileImage) {
+        updateData.mobileImage = updateData.mobileImageUrl;
+      }
     }
 
     if (updateData.destination && !updateData.targetUrl) {
@@ -340,10 +429,6 @@ export async function updateBanner(req, res, next) {
       { $set: updateData },
       { new: true, runValidators: true }
     );
-
-    if (!banner) {
-      throw new AppError("Banner not found", 404, [], "BANNER_NOT_FOUND");
-    }
 
     logger.info({
       msg: "Admin updated banner",

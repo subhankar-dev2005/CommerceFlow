@@ -4,7 +4,8 @@ import {
   adminBannerService,
   validateBannerDestination,
   validateImageUrl,
-  getEffectiveBannerStatus
+  getEffectiveBannerStatus,
+  resolveBannerImageUrl
 } from './adminBanner.service.js';
 import { apiClient } from '../../lib/apiClient.js';
 
@@ -159,6 +160,45 @@ describe('adminBannerService Unit Tests', () => {
     assert.equal(validateImageUrl('/api/v1/banners/images/banner-123.jpg'), true);
     assert.equal(validateImageUrl('ftp://invalid.com/img.jpg'), false);
     assert.equal(validateImageUrl(''), false);
+  });
+
+  it('resolves relative storage paths to absolute API URLs while preserving external and data URLs', () => {
+    // Relative storage path starting with /
+    const relative = '/api/v1/banners/images/banner-desktop-123.png';
+    const resolved = resolveBannerImageUrl(relative);
+    assert.ok(resolved.endsWith('/api/v1/banners/images/banner-desktop-123.png'));
+    assert.ok(resolved.startsWith('http'));
+
+    // Relative storage path without leading /
+    const noLeading = 'banners/images/banner-desktop-123.png';
+    const resolvedNoLeading = resolveBannerImageUrl(noLeading);
+    assert.ok(resolvedNoLeading.endsWith('/banners/images/banner-desktop-123.png'));
+    assert.ok(resolvedNoLeading.startsWith('http'));
+
+    // Admin banner image path normalized to public endpoint
+    const adminPath = '/api/v1/admin/banners/images/banner-desktop-123.png';
+    const resolvedAdmin = resolveBannerImageUrl(adminPath);
+    assert.ok(resolvedAdmin.endsWith('/api/v1/banners/images/banner-desktop-123.png'));
+    assert.ok(!resolvedAdmin.includes('/admin/banners/images/'));
+
+    const adminPathNoLeading = 'admin/banners/images/banner-desktop-123.png';
+    const resolvedAdminNoLeading = resolveBannerImageUrl(adminPathNoLeading);
+    assert.ok(resolvedAdminNoLeading.endsWith('/banners/images/banner-desktop-123.png'));
+    assert.ok(!resolvedAdminNoLeading.includes('/admin/banners/images/'));
+
+    // External absolute URL
+    const external = 'https://images.unsplash.com/photo-1510312305653-8ed496efae75';
+    assert.equal(resolveBannerImageUrl(external), external);
+
+    // Data URL
+    const dataUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA';
+    assert.equal(resolveBannerImageUrl(dataUrl), dataUrl);
+
+    // Empty, null, undefined, invalid
+    assert.equal(resolveBannerImageUrl(''), '');
+    assert.equal(resolveBannerImageUrl(null), '');
+    assert.equal(resolveBannerImageUrl(undefined), '');
+    assert.equal(resolveBannerImageUrl(123), '');
   });
 
   it('calculates effective banner status based on schedule dates', () => {

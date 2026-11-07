@@ -1,5 +1,6 @@
 /* global URL */
 import { apiClient } from '../../lib/apiClient.js';
+import { API_BASE_URL } from '../../lib/config.js';
 
 export const BANNER_PLACEMENTS = [
   { value: 'hero_carousel', label: 'Storefront Hero Carousel' },
@@ -68,6 +69,33 @@ export function validateImageUrl(url) {
   } catch {
     return false;
   }
+}
+
+/**
+ * Resolves a banner image URL or relative storage path to a browser-loadable URL.
+ * - Absolute HTTP/HTTPS URLs (e.g. external CDNs) and Data URLs (base64) are returned as-is.
+ * - Relative storage paths (e.g. /api/v1/banners/images/...) are resolved against the API origin.
+ *
+ * @param {string|null} url
+ * @returns {string}
+ */
+export function resolveBannerImageUrl(url) {
+  if (!url || typeof url !== 'string') return '';
+  const trimmed = url.trim();
+  if (!trimmed) return '';
+  if (/^https?:\/\//i.test(trimmed) || trimmed.startsWith('data:')) {
+    return trimmed;
+  }
+  // Normalize any admin banner image paths to canonical public /api/v1/banners/images/
+  const normalized = trimmed
+    .replace(/^\/?api\/v1\/admin\/banners\/images\//, '/api/v1/banners/images/')
+    .replace(/^admin\/banners\/images\//, 'banners/images/');
+
+  const origin = API_BASE_URL.replace(/\/api\/v1\/?$/, '');
+  if (normalized.startsWith('/')) {
+    return `${origin}${normalized}`;
+  }
+  return `${API_BASE_URL}/${normalized.replace(/^\/+/, '')}`;
 }
 
 /**
@@ -223,7 +251,13 @@ export const adminBannerService = {
     clearBannerInFlightRequests();
     const response = await apiClient.delete(`admin/banners/${bannerId}`);
     return response?.data;
-  }
+  },
+
+  /**
+   * Resolve banner image URL helper
+   */
+  resolveBannerImageUrl,
+  resolveImageUrl: resolveBannerImageUrl
 };
 
 export default adminBannerService;

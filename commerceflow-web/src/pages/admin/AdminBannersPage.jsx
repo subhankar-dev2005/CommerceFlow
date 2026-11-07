@@ -4,7 +4,8 @@ import {
   adminBannerService,
   BANNER_PLACEMENTS,
   BANNER_DESTINATION_TYPES,
-  getEffectiveBannerStatus
+  getEffectiveBannerStatus,
+  resolveBannerImageUrl
 } from '../../features/admin/adminBanner.service.js';
 import AdminPageHeader from '../../layouts/admin/AdminPageHeader.jsx';
 import { AdminLoadingState, AdminErrorState, AdminEmptyState } from '../../layouts/admin/AdminShellStates.jsx';
@@ -278,16 +279,20 @@ export default function AdminBannersPage() {
         throw new Error('A desktop banner image is required before publishing.');
       }
 
+      const isDesktopBase64 = typeof dImage === 'string' && dImage.startsWith('data:');
+      const isMobileBase64 = typeof (formData.mobileImage || formData.mobileImageUrl) === 'string' &&
+        (formData.mobileImage || formData.mobileImageUrl).startsWith('data:');
+
       const bannerPayload = {
         title: formData.title,
         heading: formData.heading,
         subtitle: formData.subtitle,
         buttonLabel: formData.buttonLabel,
         placement: formData.placement,
-        imageUrl: dImage,
         desktopImage: dImage,
-        mobileImageUrl: formData.mobileImage || formData.mobileImageUrl || '',
+        imageUrl: isDesktopBase64 ? undefined : dImage,
         mobileImage: formData.mobileImage || formData.mobileImageUrl || '',
+        mobileImageUrl: isMobileBase64 ? '' : (formData.mobileImage || formData.mobileImageUrl || ''),
         altText: formData.altText,
         destinationType: formData.destinationType,
         destination: formData.destination || formData.targetUrl,
@@ -458,7 +463,7 @@ export default function AdminBannersPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
           {banners.map((b, idx) => {
             const hasMobile = Boolean(b.mobileImage || b.mobileImageUrl);
-            const desktopSrc = b.desktopImage || b.imageUrl;
+            const desktopSrc = resolveBannerImageUrl(b.desktopImage || b.imageUrl);
             return (
               <div
                 key={b._id || b.id}
@@ -779,7 +784,7 @@ export default function AdminBannersPage() {
                 {(formData.desktopImage || formData.imageUrl) && (
                   <div className="relative aspect-video max-h-36 rounded-xl border border-slate-200 overflow-hidden bg-slate-100 flex items-center justify-center">
                     <img
-                      src={formData.desktopImage || formData.imageUrl}
+                      src={resolveBannerImageUrl(formData.desktopImage || formData.imageUrl)}
                       alt="Desktop Preview"
                       className="w-full h-full object-cover"
                     />
@@ -832,7 +837,7 @@ export default function AdminBannersPage() {
                 {(formData.mobileImage || formData.mobileImageUrl) && (
                   <div className="relative aspect-4/3 max-h-32 rounded-xl border border-slate-200 overflow-hidden bg-slate-100 flex items-center justify-center">
                     <img
-                      src={formData.mobileImage || formData.mobileImageUrl}
+                      src={resolveBannerImageUrl(formData.mobileImage || formData.mobileImageUrl)}
                       alt="Mobile Preview"
                       className="w-full h-full object-cover"
                     />
@@ -1023,11 +1028,11 @@ export default function AdminBannersPage() {
                 {/* Background image */}
                 <div className="absolute inset-0 z-0">
                   <img
-                    src={
+                    src={resolveBannerImageUrl(
                       previewViewport === 'mobile' && previewingBanner.mobileImage
                         ? previewingBanner.mobileImage
                         : previewingBanner.desktopImage || previewingBanner.imageUrl
-                    }
+                    )}
                     alt={previewingBanner.altText || ''}
                     className="w-full h-full object-cover object-center brightness-[0.82]"
                   />

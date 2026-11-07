@@ -54,6 +54,23 @@ export const getPublicBannersSchema = z.object({
     .default({})
 });
 
+/**
+ * Validates that an image input is either a valid URL/storage path or a valid base64 image data payload.
+ *
+ * @param {string} val
+ * @returns {boolean}
+ */
+export function isValidBannerImageInput(val) {
+  if (typeof val !== "string") return false;
+  const trimmed = val.trim();
+  if (!trimmed) return false;
+  // If base64 data URL or raw base64 string, allow for decoding and strict magic byte buffer validation
+  if (trimmed.startsWith("data:") || trimmed.length > 1000) {
+    return true;
+  }
+  return isValidBannerImageUrl(trimmed);
+}
+
 export const createBannerSchema = z.object({
   params: z.object({}).optional(),
   query: z.object({}).optional(),
@@ -76,25 +93,25 @@ export const createBannerSchema = z.object({
       imageUrl: z
         .string()
         .trim()
-        .refine(isValidBannerImageUrl, "imageUrl must be a valid HTTP/HTTPS URL or safe relative storage path")
+        .refine(isValidBannerImageInput, "imageUrl must be a valid HTTP/HTTPS URL, safe storage path, or base64 data string")
         .optional(),
 
       desktopImage: z
         .string()
         .trim()
-        .refine(isValidBannerImageUrl, "desktopImage must be a valid HTTP/HTTPS URL or safe relative storage path")
+        .refine(isValidBannerImageInput, "desktopImage must be a valid HTTP/HTTPS URL, safe storage path, or base64 data string")
         .optional(),
 
       mobileImageUrl: z
         .preprocess(
           (val) => (val === "" ? null : val),
-          z.string().trim().refine(isValidBannerImageUrl, "mobileImageUrl must be a valid URL or path").optional().nullable()
+          z.string().trim().refine(isValidBannerImageInput, "mobileImageUrl must be a valid URL, path, or base64 data string").optional().nullable()
         ),
 
       mobileImage: z
         .preprocess(
           (val) => (val === "" ? null : val),
-          z.string().trim().refine(isValidBannerImageUrl, "mobileImage must be a valid URL or path").optional().nullable()
+          z.string().trim().refine(isValidBannerImageInput, "mobileImage must be a valid URL, path, or base64 data string").optional().nullable()
         ),
 
       altText: z
@@ -192,22 +209,22 @@ export const updateBannerSchema = z.object({
       imageUrl: z
         .string()
         .trim()
-        .refine(isValidBannerImageUrl, "imageUrl must be a valid URL or path")
+        .refine(isValidBannerImageInput, "imageUrl must be a valid URL, path, or base64 data string")
         .optional(),
       desktopImage: z
         .string()
         .trim()
-        .refine(isValidBannerImageUrl, "desktopImage must be a valid URL or path")
+        .refine(isValidBannerImageInput, "desktopImage must be a valid URL, path, or base64 data string")
         .optional(),
       mobileImageUrl: z
         .preprocess(
           (val) => (val === "" ? null : val),
-          z.string().trim().refine(isValidBannerImageUrl, "mobileImageUrl must be a valid URL or path").optional().nullable()
+          z.string().trim().refine(isValidBannerImageInput, "mobileImageUrl must be a valid URL, path, or base64 data string").optional().nullable()
         ),
       mobileImage: z
         .preprocess(
           (val) => (val === "" ? null : val),
-          z.string().trim().refine(isValidBannerImageUrl, "mobileImage must be a valid URL or path").optional().nullable()
+          z.string().trim().refine(isValidBannerImageInput, "mobileImage must be a valid URL, path, or base64 data string").optional().nullable()
         ),
       altText: z.string().trim().min(3).max(250).optional(),
       destinationType: z.enum(BANNER_DESTINATION_TYPES).optional(),
