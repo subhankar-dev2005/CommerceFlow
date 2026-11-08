@@ -13,9 +13,11 @@ describe("Production Admin User Management Security & Lifecycle Tests", () => {
   const adminId1 = "507f1f77bcf86cd799439001";
   const adminId2 = "507f1f77bcf86cd799439002";
   const customerId = "507f1f77bcf86cd799439003";
+  const superAdminId = "507f1f77bcf86cd799439004";
 
   let adminToken1;
   let customerToken;
+  let superAdminToken;
 
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -35,6 +37,12 @@ describe("Production Admin User Management Security & Lifecycle Tests", () => {
       userId: customerId,
       email: "customer@example.com",
       role: "customer"
+    });
+
+    superAdminToken = generateToken({
+      userId: superAdminId,
+      email: "superadmin@example.com",
+      role: "super_admin"
     });
   });
 
@@ -564,6 +572,201 @@ describe("Production Admin User Management Security & Lifecycle Tests", () => {
       expect(loggedPayload.password).toBeUndefined();
       expect(loggedPayload.token).toBeUndefined();
       expect(loggedPayload.SuperSecretPassword123).toBeUndefined();
+    });
+
+    it("21. ordinary admin cannot promote a user to super_admin (403 CANNOT_PROMOTE_TO_SUPER_ADMIN)", async () => {
+      vi.spyOn(User, "findById").mockImplementation((id) => {
+        if (id === adminId1) {
+          return Promise.resolve({
+            _id: adminId1,
+            email: "admin1@example.com",
+            role: "admin",
+            isActive: true
+          });
+        }
+        if (id === adminId2) {
+          return Promise.resolve({
+            _id: adminId2,
+            email: "admin2@example.com",
+            role: "admin",
+            isActive: true
+          });
+        }
+        return Promise.resolve(null);
+      });
+
+      const res = await request(app)
+        .patch(`/api/v1/admin/users/${adminId2}/role`)
+        .set("Cookie", `${AUTH_COOKIE_NAME}=${adminToken1}`)
+        .send({ role: "super_admin" });
+
+      expect(res.status).toBe(403);
+      expect(res.body.success).toBe(false);
+      expect(res.body.error.code).toBe("CANNOT_PROMOTE_TO_SUPER_ADMIN");
+    });
+
+    it("22. ordinary admin cannot mutate super_admin role (403 CANNOT_MODIFY_SUPER_ADMIN)", async () => {
+      vi.spyOn(User, "findById").mockImplementation((id) => {
+        if (id === adminId1) {
+          return Promise.resolve({
+            _id: adminId1,
+            email: "admin1@example.com",
+            role: "admin",
+            isActive: true
+          });
+        }
+        if (id === superAdminId) {
+          return Promise.resolve({
+            _id: superAdminId,
+            email: "superadmin@example.com",
+            role: "super_admin",
+            isActive: true
+          });
+        }
+        return Promise.resolve(null);
+      });
+
+      const res = await request(app)
+        .patch(`/api/v1/admin/users/${superAdminId}/role`)
+        .set("Cookie", `${AUTH_COOKIE_NAME}=${adminToken1}`)
+        .send({ role: "admin" });
+
+      expect(res.status).toBe(403);
+      expect(res.body.success).toBe(false);
+      expect(res.body.error.code).toBe("CANNOT_MODIFY_SUPER_ADMIN");
+    });
+
+    it("23. ordinary admin cannot deactivate super_admin account (403 CANNOT_MODIFY_SUPER_ADMIN)", async () => {
+      vi.spyOn(User, "findById").mockImplementation((id) => {
+        if (id === adminId1) {
+          return Promise.resolve({
+            _id: adminId1,
+            email: "admin1@example.com",
+            role: "admin",
+            isActive: true
+          });
+        }
+        if (id === superAdminId) {
+          return Promise.resolve({
+            _id: superAdminId,
+            email: "superadmin@example.com",
+            role: "super_admin",
+            isActive: true
+          });
+        }
+        return Promise.resolve(null);
+      });
+
+      const res = await request(app)
+        .patch(`/api/v1/admin/users/${superAdminId}/status`)
+        .set("Cookie", `${AUTH_COOKIE_NAME}=${adminToken1}`)
+        .send({ isActive: false });
+
+      expect(res.status).toBe(403);
+      expect(res.body.success).toBe(false);
+      expect(res.body.error.code).toBe("CANNOT_MODIFY_SUPER_ADMIN");
+    });
+
+    it("24. super_admin can promote an admin to super_admin", async () => {
+      const mockAdminTarget = {
+        _id: adminId2,
+        email: "admin2@example.com",
+        role: "admin",
+        isActive: true,
+        save: vi.fn().mockResolvedValue(true)
+      };
+
+      vi.spyOn(User, "findById").mockImplementation((id) => {
+        if (id === superAdminId) {
+          return Promise.resolve({
+            _id: superAdminId,
+            email: "superadmin@example.com",
+            role: "super_admin",
+            isActive: true
+          });
+        }
+        if (id === adminId2) {
+          return Promise.resolve(mockAdminTarget);
+        }
+        return Promise.resolve(null);
+      });
+
+      const res = await request(app)
+        .patch(`/api/v1/admin/users/${adminId2}/role`)
+        .set("Cookie", `${AUTH_COOKIE_NAME}=${superAdminToken}`)
+        .send({ role: "super_admin" });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.user.role).toBe("super_admin");
+      expect(mockAdminTarget.role).toBe("super_admin");
+    });
+
+    it("25. super_admin cannot demote the final active super_admin (409 CANNOT_DEMOTE_LAST_SUPER_ADMIN)", async () => {
+      const mockSuperAdminTarget = {
+        _id: superAdminId,
+        email: "superadmin@example.com",
+        role: "super_admin",
+        isActive: true,
+        save: vi.fn().mockResolvedValue(true)
+      };
+
+      vi.spyOn(User, "findById").mockImplementation((id) => {
+        if (id === superAdminId) {
+          return Promise.resolve(mockSuperAdminTarget);
+        }
+        return Promise.resolve(null);
+      });
+
+      // 1 active super admin remaining
+      vi.spyOn(User, "countDocuments").mockResolvedValue(1);
+
+      const res = await request(app)
+        .patch(`/api/v1/admin/users/${superAdminId}/role`)
+        .set("Cookie", `${AUTH_COOKIE_NAME}=${superAdminToken}`)
+        .send({ role: "admin" });
+
+      expect(res.status).toBe(409);
+      expect(res.body.success).toBe(false);
+      expect(res.body.error.code).toBe("CANNOT_DEMOTE_LAST_SUPER_ADMIN");
+    });
+
+    it("26. super_admin cannot deactivate the final active super_admin (409 CANNOT_DEACTIVATE_LAST_SUPER_ADMIN)", async () => {
+      const anotherSuperAdminId = "507f1f77bcf86cd799439005";
+      const mockAnotherSuperAdmin = {
+        _id: anotherSuperAdminId,
+        email: "superadmin2@example.com",
+        role: "super_admin",
+        isActive: true,
+        save: vi.fn().mockResolvedValue(true)
+      };
+
+      vi.spyOn(User, "findById").mockImplementation((id) => {
+        if (id === superAdminId) {
+          return Promise.resolve({
+            _id: superAdminId,
+            email: "superadmin@example.com",
+            role: "super_admin",
+            isActive: true
+          });
+        }
+        if (id === anotherSuperAdminId) {
+          return Promise.resolve(mockAnotherSuperAdmin);
+        }
+        return Promise.resolve(null);
+      });
+
+      // 1 active super admin remaining
+      vi.spyOn(User, "countDocuments").mockResolvedValue(1);
+
+      const res = await request(app)
+        .patch(`/api/v1/admin/users/${anotherSuperAdminId}/status`)
+        .set("Cookie", `${AUTH_COOKIE_NAME}=${superAdminToken}`)
+        .send({ isActive: false });
+
+      expect(res.status).toBe(409);
+      expect(res.body.success).toBe(false);
+      expect(res.body.error.code).toBe("CANNOT_DEACTIVATE_LAST_SUPER_ADMIN");
     });
   });
 });

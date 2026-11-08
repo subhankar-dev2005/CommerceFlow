@@ -7,6 +7,7 @@ import {
   recordAdminAuditEvent,
   AUDIT_EVENT_TYPES
 } from "../audit/admin-audit.service.js";
+import { ALL_ROLES, ROLES } from "../../config/roles.js";
 
 /**
  * GET /api/v1/admin/users
@@ -26,7 +27,7 @@ export async function getAdminUsers(req, res, next) {
 
     // 1. Role filter
     const role = req.query.role || "all";
-    if (role === "admin" || role === "customer") {
+    if (ALL_ROLES.includes(role)) {
       filter.role = role;
     }
 
@@ -203,12 +204,47 @@ export async function updateAdminUserStatus(req, res, next) {
       throw new AppError("User not found", 404, [], "USER_NOT_FOUND");
     }
 
+    // Ordinary Admins cannot modify or deactivate Super Admin accounts
+    if (targetUser.role === ROLES.SUPER_ADMIN && req.user?.role !== ROLES.SUPER_ADMIN) {
+      throw new AppError(
+        "Only Super Administrators can modify Super Administrator accounts",
+        403,
+        [],
+        "CANNOT_MODIFY_SUPER_ADMIN"
+      );
+    }
+
     // Safety checks when attempting deactivation
     if (isActive === false && targetUser.isActive === true) {
-      if (targetUser.role === "admin") {
+      if (targetUser.role === ROLES.SUPER_ADMIN) {
+        // Last-super-admin protection: Ensure at least one active super admin remains
+        const activeSuperAdminCount = await User.countDocuments({
+          role: ROLES.SUPER_ADMIN,
+          isActive: true
+        });
+
+        if (activeSuperAdminCount <= 1) {
+          throw new AppError(
+            "Cannot deactivate the final active super administrator",
+            409,
+            [],
+            "CANNOT_DEACTIVATE_LAST_SUPER_ADMIN"
+          );
+        }
+
+        // Self-protection: Prevent an administrator from deactivating their own account
+        if (req.user && req.user._id && req.user._id.toString() === userId) {
+          throw new AppError(
+            "Administrators cannot deactivate their own account",
+            400,
+            [],
+            "CANNOT_DEACTIVATE_SELF"
+          );
+        }
+      } else if (targetUser.role === ROLES.ADMIN) {
         // Last-admin protection: Ensure at least one active admin remains
         const activeAdminCount = await User.countDocuments({
-          role: "admin",
+          role: ROLES.ADMIN,
           isActive: true
         });
 
@@ -324,10 +360,47 @@ export async function updateAdminUserRole(req, res, next) {
       });
     }
 
+    // Privilege escalation protection: Ordinary admin cannot mutate Super Admin accounts
+    if (targetUser.role === ROLES.SUPER_ADMIN && req.user?.role !== ROLES.SUPER_ADMIN) {
+      throw new AppError(
+        "Only Super Administrators can modify Super Administrator accounts",
+        403,
+        [],
+        "CANNOT_MODIFY_SUPER_ADMIN"
+      );
+    }
+
+    // Privilege escalation protection: Ordinary admin cannot promote to Super Admin
+    if (role === ROLES.SUPER_ADMIN && req.user?.role !== ROLES.SUPER_ADMIN) {
+      throw new AppError(
+        "Only Super Administrators can promote users to Super Administrator",
+        403,
+        [],
+        "CANNOT_PROMOTE_TO_SUPER_ADMIN"
+      );
+    }
+
+    // Demotion protection: Guard against removing the last active super administrator
+    if (targetUser.role === ROLES.SUPER_ADMIN && role !== ROLES.SUPER_ADMIN) {
+      const activeSuperAdminCount = await User.countDocuments({
+        role: ROLES.SUPER_ADMIN,
+        isActive: true
+      });
+
+      if (activeSuperAdminCount <= 1 && targetUser.isActive === true) {
+        throw new AppError(
+          "Cannot demote the final active super administrator",
+          409,
+          [],
+          "CANNOT_DEMOTE_LAST_SUPER_ADMIN"
+        );
+      }
+    }
+
     // Demotion protection: Guard against removing the last active administrator
-    if (targetUser.role === "admin" && role === "customer") {
+    if (targetUser.role === ROLES.ADMIN && role === ROLES.CUSTOMER) {
       const activeAdminCount = await User.countDocuments({
-        role: "admin",
+        role: ROLES.ADMIN,
         isActive: true
       });
 
@@ -339,9 +412,15 @@ export async function updateAdminUserRole(req, res, next) {
           "CANNOT_DEMOTE_LAST_ADMIN"
         );
       }
+    }
 
-      // Self-protection: Acting admin cannot demote their own account
-      if (req.user && req.user._id && req.user._id.toString() === userId) {
+    // Self-protection: Acting admin cannot demote their own account
+    if (req.user && req.user._id && req.user._id.toString() === userId) {
+      const isSelfDemotion =
+        (req.user.role === ROLES.SUPER_ADMIN && role !== ROLES.SUPER_ADMIN) ||
+        (req.user.role === ROLES.ADMIN && role === ROLES.CUSTOMER);
+
+      if (isSelfDemotion) {
         throw new AppError(
           "Administrators cannot demote their own account",
           400,
