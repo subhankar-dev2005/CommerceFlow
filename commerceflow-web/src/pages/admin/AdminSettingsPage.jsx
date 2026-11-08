@@ -1,6 +1,8 @@
-/* global queueMicrotask */
-import { useState, useEffect, useCallback } from 'react';
+/* global queueMicrotask, FileReader */
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { adminSettingsService as defaultSettingsService } from '../../features/admin/adminSettings.service.js';
+import { useBranding } from '../../features/branding/useBranding.js';
+import { resolveLogoUrl } from '../../features/branding/branding.context.jsx';
 import AdminPageHeader from '../../layouts/admin/AdminPageHeader.jsx';
 import { AdminLoadingState, AdminErrorState } from '../../layouts/admin/AdminShellStates.jsx';
 
@@ -14,6 +16,7 @@ export default function AdminSettingsPage({
   settingsService: propSettingsService,
 }) {
   const service = propSettingsService || defaultSettingsService;
+  const { updateBranding } = useBranding();
 
   const [settings, setSettings] = useState({
     storeName: 'CommerceFlow',
@@ -26,6 +29,12 @@ export default function AdminSettingsPage({
     lowStockThreshold: 5,
     returnWindowDays: 14,
     isMaintenanceMode: false,
+    codEnabled: true,
+    upiEnabled: true,
+    announcementText: '🏕️ Free shipping on orders over $50',
+    logoUrl: null,
+    logoAlt: 'CommerceFlow Logo',
+    logoUpdatedAt: null,
   });
 
   const [systemInfo, setSystemInfo] = useState({
@@ -44,6 +53,27 @@ export default function AdminSettingsPage({
   const [saveSuccess, setSaveSuccess] = useState(null);
   const [saveError, setSaveError] = useState(null);
 
+  // Logo management state
+  const [stagedFile, setStagedFile] = useState(null);
+  const [stagedPreviewUrl, setStagedPreviewUrl] = useState(null);
+  const [stagedAltText, setStagedAltText] = useState('CommerceFlow Logo');
+  const [isUploadingLogo, setIsUploadingLogo] = useState(false);
+  const [isResettingLogo, setIsResettingLogo] = useState(false);
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
+  const [brandingError, setBrandingError] = useState(null);
+  const [brandingSuccess, setBrandingSuccess] = useState(null);
+  const [showResetConfirmModal, setShowResetConfirmModal] = useState(false);
+  const fileInputRef = useRef(null);
+
+  // Announcement management state
+  const [announcementInput, setAnnouncementInput] = useState('🏕️ Free shipping on orders over $50');
+  const [announcementError, setAnnouncementError] = useState(null);
+  const [announcementSuccess, setAnnouncementSuccess] = useState(null);
+  const [isSavingAnnouncement, setIsSavingAnnouncement] = useState(false);
+  const [isResettingAnnouncement, setIsResettingAnnouncement] = useState(false);
+  const [showAnnouncementResetModal, setShowAnnouncementResetModal] = useState(false);
+
+
   const loadSettings = useCallback(async () => {
     setIsLoading(true);
     setError(null);
@@ -51,12 +81,21 @@ export default function AdminSettingsPage({
       const res = await service.getStoreSettings();
       if (res.settings && Object.keys(res.settings).length > 0) {
         setSettings((prev) => ({ ...prev, ...res.settings }));
+        if (res.settings.announcementText !== undefined) {
+          setAnnouncementInput(res.settings.announcementText || '🏕️ Free shipping on orders over $50');
+        }
       }
       if (res.systemInfo) {
         setSystemInfo(res.systemInfo);
       }
     } catch (err) {
-      setError(err?.message || 'Failed to retrieve store settings.');
+      if (err?.status === 403) {
+        setError('Access denied: You do not have permission to view or manage administrative store settings.');
+      } else if (err?.code === 'NETWORK_ERROR' || err?.status === 0) {
+        setError('Unable to connect to CommerceFlow API server. Please check your network connection or verify the backend server is running on port 4000.');
+      } else {
+        setError(err?.message || 'Failed to retrieve store settings.');
+      }
     } finally {
       setIsLoading(false);
     }
@@ -99,17 +138,246 @@ export default function AdminSettingsPage({
         lowStockThreshold: parseInt(settings.lowStockThreshold, 10) || 5,
         returnWindowDays: parseInt(settings.returnWindowDays, 10) || 14,
         isMaintenanceMode: Boolean(settings.isMaintenanceMode),
+        codEnabled: Boolean(settings.codEnabled !== false),
+        upiEnabled: Boolean(settings.upiEnabled !== false),
+        announcementText: String(settings.announcementText || announcementInput || '🏕️ Free shipping on orders over $50').trim(),
       };
 
       const res = await service.updateStoreSettings(payload);
       if (res.settings) {
         setSettings((prev) => ({ ...prev, ...res.settings }));
+        if (res.settings.announcementText !== undefined) {
+          setAnnouncementInput(res.settings.announcementText || '🏕️ Free shipping on orders over $50');
+          updateBranding({ announcementText: res.settings.announcementText || '🏕️ Free shipping on orders over $50' });
+        }
       }
       setSaveSuccess('Store settings successfully updated and persisted.');
     } catch (err) {
       setSaveError(err?.message || 'Failed to save store configuration.');
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleValidateAndStageFile = (file) => {
+    setBrandingError(null);
+    setBrandingSuccess(null);
+
+    if (!file) return;
+
+    const allowedMimeTypes = ['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'];
+    const allowedExtensions = ['.png', '.jpg', '.jpeg', '.webp', '.svg'];
+    const fileName = file.name ? file.name.toLowerCase() : '';
+    const hasValidExt = allowedExtensions.some((ext) => fileName.endsWith(ext));
+    const hasValidMime = allowedMimeTypes.includes(file.type?.toLowerCase());
+
+    if (!hasValidExt && !hasValidMime) {
+      setBrandingError('Unsupported file type. Please upload a PNG, JPEG, WebP, or clean SVG image file.');
+      return;
+    }
+
+    const MAX_SIZE = 2 * 1024 * 1024;
+    if (file.size > MAX_SIZE) {
+      setBrandingError(`File size exceeds 2 MB limit (selected file is ${(file.size / (1024 * 1024)).toFixed(2)} MB).`);
+      return;
+    }
+
+    if (typeof FileReader === 'undefined') {
+      setBrandingError('File preview is not supported in this environment.');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      setStagedPreviewUrl(e.target.result);
+      setStagedFile(file);
+      if (!stagedAltText || stagedAltText === 'CommerceFlow Logo') {
+        const cleanName = file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
+        setStagedAltText(`${cleanName} Logo`);
+      }
+    };
+    reader.onerror = () => {
+      setBrandingError('Failed to read the selected file. Please try again.');
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleFileSelect = (e) => {
+    const files = e.target.files;
+    if (files && files.length > 0) {
+      handleValidateAndStageFile(files[0]);
+    }
+  };
+
+  const handleDiscardStagedLogo = () => {
+    setStagedFile(null);
+    setStagedPreviewUrl(null);
+    setBrandingError(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const handleSaveLogo = async () => {
+    if (!stagedPreviewUrl) {
+      setBrandingError('Please select a logo file before saving.');
+      return;
+    }
+
+    setIsUploadingLogo(true);
+    setBrandingError(null);
+    setBrandingSuccess(null);
+
+    try {
+      const res = await service.uploadLogo({
+        image: stagedPreviewUrl,
+        altText: stagedAltText?.trim() || 'CommerceFlow Logo',
+      });
+
+      setSettings((prev) => ({
+        ...prev,
+        logoUrl: res.logoUrl,
+        logoAlt: res.logoAlt || stagedAltText,
+        logoUpdatedAt: res.updatedAt || new Date().toISOString(),
+      }));
+
+      updateBranding({
+        logoUrl: res.logoUrl,
+        logoAlt: res.logoAlt || stagedAltText,
+        hasCustomLogo: true,
+        updatedAt: res.updatedAt,
+      });
+
+      setBrandingSuccess('Website logo successfully updated and published across all headers and navigation.');
+      handleDiscardStagedLogo();
+    } catch (err) {
+      setBrandingError(err?.message || 'Failed to upload and save website logo.');
+    } finally {
+      setIsUploadingLogo(false);
+    }
+  };
+
+  const handleConfirmResetLogo = async () => {
+    setIsResettingLogo(true);
+    setBrandingError(null);
+    setBrandingSuccess(null);
+
+    try {
+      const res = await service.resetLogo();
+
+      setSettings((prev) => ({
+        ...prev,
+        logoUrl: null,
+        logoAlt: 'CommerceFlow Logo',
+        logoUpdatedAt: res.updatedAt || new Date().toISOString(),
+      }));
+
+      updateBranding({
+        logoUrl: null,
+        logoAlt: 'CommerceFlow Logo',
+        hasCustomLogo: false,
+        updatedAt: res.updatedAt,
+      });
+
+      setBrandingSuccess('Website logo reset to original default CommerceFlow logo.');
+      setShowResetConfirmModal(false);
+      handleDiscardStagedLogo();
+    } catch (err) {
+      setBrandingError(err?.message || 'Failed to reset website logo.');
+    } finally {
+      setIsResettingLogo(false);
+    }
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingOver(true);
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingOver(false);
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingOver(false);
+    const files = e.dataTransfer?.files;
+    if (files && files.length > 0) {
+      handleValidateAndStageFile(files[0]);
+    }
+  };
+
+  const handleSaveAnnouncement = async () => {
+    const trimmed = announcementInput.trim();
+    if (!trimmed) {
+      setAnnouncementError('Announcement message cannot be empty.');
+      return;
+    }
+    if (trimmed.length > 200) {
+      setAnnouncementError('Announcement message cannot exceed 200 characters.');
+      return;
+    }
+
+    setIsSavingAnnouncement(true);
+    setAnnouncementError(null);
+    setAnnouncementSuccess(null);
+
+    try {
+      await service.updateStoreSettings({
+        announcementText: trimmed,
+      });
+
+      setSettings((prev) => ({
+        ...prev,
+        announcementText: trimmed,
+      }));
+      setAnnouncementInput(trimmed);
+
+      updateBranding({
+        announcementText: trimmed,
+      });
+
+      setAnnouncementSuccess('Storefront announcement successfully updated and published across all pages.');
+    } catch (err) {
+      setAnnouncementError(err?.message || 'Failed to save announcement.');
+    } finally {
+      setIsSavingAnnouncement(false);
+    }
+  };
+
+  const handleConfirmResetAnnouncement = async () => {
+    setIsResettingAnnouncement(true);
+    setAnnouncementError(null);
+    setAnnouncementSuccess(null);
+
+    try {
+      const defaultMsg = '🏕️ Free shipping on orders over $50';
+      if (typeof service.resetAnnouncement === 'function') {
+        await service.resetAnnouncement();
+      } else {
+        await service.updateStoreSettings({ announcementText: defaultMsg });
+      }
+
+      setSettings((prev) => ({
+        ...prev,
+        announcementText: defaultMsg,
+      }));
+      setAnnouncementInput(defaultMsg);
+
+      updateBranding({
+        announcementText: defaultMsg,
+      });
+
+      setAnnouncementSuccess('Storefront announcement reset to default message.');
+      setShowAnnouncementResetModal(false);
+    } catch (err) {
+      setAnnouncementError(err?.message || 'Failed to reset announcement.');
+    } finally {
+      setIsResettingAnnouncement(false);
     }
   };
 
@@ -180,6 +448,28 @@ export default function AdminSettingsPage({
             </button>
             <button
               type="button"
+              onClick={() => setActiveTab('branding')}
+              className={`px-4 py-3 border-b-2 transition-colors whitespace-nowrap cursor-pointer ${
+                activeTab === 'branding'
+                  ? 'border-[#123C32] text-[#123C32]'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              Website Branding
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('announcement')}
+              className={`px-4 py-3 border-b-2 transition-colors whitespace-nowrap cursor-pointer ${
+                activeTab === 'announcement'
+                  ? 'border-[#123C32] text-[#123C32]'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              Announcement Bar
+            </button>
+            <button
+              type="button"
               onClick={() => setActiveTab('fulfillment')}
               className={`px-4 py-3 border-b-2 transition-colors whitespace-nowrap cursor-pointer ${
                 activeTab === 'fulfillment'
@@ -199,6 +489,17 @@ export default function AdminSettingsPage({
               }`}
             >
               Inventory Alerts
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('payments')}
+              className={`px-4 py-3 border-b-2 transition-colors whitespace-nowrap cursor-pointer ${
+                activeTab === 'payments'
+                  ? 'border-[#123C32] text-[#123C32]'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              Payment Methods
             </button>
             <button
               type="button"
@@ -294,6 +595,529 @@ export default function AdminSettingsPage({
                     </div>
                   </div>
                 </div>
+              </div>
+            )}
+
+            {/* Website Branding Tab */}
+            {activeTab === 'branding' && (
+              <div className="bg-white rounded-2xl border border-[#E4E8E5] p-6 sm:p-8 space-y-6 shadow-2xs">
+                {/* Section Header */}
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-100 pb-4">
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900">
+                      Website Branding & Logo Management
+                    </h3>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Upload and manage the official brand logo displayed across the storefront header, navigation, footer, and administrative console.
+                    </p>
+                  </div>
+                  <div>
+                    {settings.logoUrl ? (
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                        Active Custom Logo
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200">
+                        <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+                        Default Mountain Logo
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Dedicated Branding Success Notification */}
+                {brandingSuccess && (
+                  <div
+                    role="status"
+                    className="p-4 rounded-xl text-xs font-semibold flex items-center justify-between border bg-emerald-50 text-emerald-800 border-emerald-200"
+                  >
+                    <span>{brandingSuccess}</span>
+                    <button
+                      type="button"
+                      onClick={() => setBrandingSuccess(null)}
+                      className="text-emerald-700 hover:text-emerald-900 font-bold ml-4 cursor-pointer"
+                    >
+                      &times;
+                    </button>
+                  </div>
+                )}
+
+                {/* Dedicated Branding Error Notification */}
+                {brandingError && (
+                  <div
+                    role="alert"
+                    className="p-4 rounded-xl text-xs font-semibold flex items-center justify-between border bg-rose-50 text-rose-800 border-rose-200"
+                  >
+                    <span>{brandingError}</span>
+                    <button
+                      type="button"
+                      onClick={() => setBrandingError(null)}
+                      className="text-rose-700 hover:text-rose-900 font-bold ml-4 cursor-pointer"
+                    >
+                      &times;
+                    </button>
+                  </div>
+                )}
+
+                {/* Current Published Logo + File Upload Dropzone */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {/* Current Active Logo Box */}
+                  <div className="space-y-3">
+                    <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                      Current Published Logo
+                    </h4>
+                    <div className="p-6 rounded-2xl bg-[#F7F9F8] border border-[#E4E8E5] min-h-[160px] flex flex-col justify-center items-center text-center">
+                      {settings.logoUrl ? (
+                        <div className="space-y-3 flex flex-col items-center">
+                          <div className="p-3 bg-white rounded-xl border border-slate-200 shadow-2xs">
+                            <img
+                              src={resolveLogoUrl(settings.logoUrl)}
+                              alt={settings.logoAlt || 'Active Website Logo'}
+                              className="h-12 w-auto max-w-[200px] object-contain"
+                            />
+                          </div>
+                          <div className="text-[11px] text-slate-500 space-y-0.5">
+                            <p className="font-semibold text-slate-700">{settings.logoAlt || 'CommerceFlow Logo'}</p>
+                            <p className="font-mono text-[10px] text-slate-400">Custom Uploaded Brand Asset</p>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="space-y-3 flex flex-col items-center">
+                          <div className="h-12 w-12 rounded-xl bg-[#123C32] flex items-center justify-center text-white shadow-xs">
+                            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M3 18l5-9 4 7 2-4 5 6H3z" />
+                            </svg>
+                          </div>
+                          <div className="text-[11px] text-slate-500">
+                            <p className="font-semibold text-slate-700">CommerceFlow Mountain Logo</p>
+                            <p className="text-[10px] text-slate-400">Default brand mark active across all storefront pages</p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* File Upload / Drag & Drop Zone */}
+                  <div className="space-y-3">
+                    <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                      Upload New Logo
+                    </h4>
+                    <div
+                      onDragOver={handleDragOver}
+                      onDragLeave={handleDragLeave}
+                      onDrop={handleDrop}
+                      onClick={() => fileInputRef.current?.click()}
+                      className={`border-2 border-dashed rounded-2xl p-6 min-h-[160px] flex flex-col items-center justify-center text-center cursor-pointer transition-all ${
+                        isDraggingOver
+                          ? 'border-[#123C32] bg-[#EEF5F1]'
+                          : 'border-slate-300 hover:border-[#123C32]/60 bg-slate-50/50 hover:bg-slate-50'
+                      }`}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          fileInputRef.current?.click();
+                        }
+                      }}
+                      aria-label="Upload logo file dropzone. Click or drag and drop an image file here."
+                    >
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept=".png,.jpg,.jpeg,.webp,.svg,image/png,image/jpeg,image/webp,image/svg+xml"
+                        onChange={handleFileSelect}
+                        className="hidden"
+                        id="logo-file-input"
+                      />
+                      <div className="w-10 h-10 rounded-xl bg-[#123C32]/10 text-[#123C32] flex items-center justify-center mb-2">
+                        <svg className="w-5 h-5 stroke-[2]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+                        </svg>
+                      </div>
+                      <p className="text-xs font-bold text-slate-800">
+                        Click to browse <span className="font-normal text-slate-500">or drag and drop</span>
+                      </p>
+                      <p className="text-[11px] text-slate-500 mt-1">
+                        PNG, JPEG, WebP, or clean SVG (up to 2 MB)
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Staged Unsaved Preview Banner (Appears when a new file is chosen) */}
+                {stagedPreviewUrl && (
+                  <div className="p-5 rounded-2xl bg-amber-50/60 border border-amber-300/80 space-y-4">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-amber-200/60 pb-3">
+                      <div className="flex items-center gap-2">
+                        <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-amber-200 text-amber-900">
+                          Unsaved Preview
+                        </span>
+                        <span className="text-xs font-bold text-slate-900">
+                          {stagedFile?.name || 'Selected Logo File'}
+                        </span>
+                        {stagedFile?.size && (
+                          <span className="text-[11px] text-slate-500">
+                            ({(stagedFile.size / 1024).toFixed(1)} KB)
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[11px] text-amber-800 font-medium">
+                        Changes will not take effect until you click Save Changes.
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-center">
+                      {/* Unsaved Preview Image */}
+                      <div className="p-4 bg-white rounded-xl border border-amber-200/80 flex items-center justify-center">
+                        <img
+                          src={stagedPreviewUrl}
+                          alt={stagedAltText || 'Unsaved Preview Logo'}
+                          className="h-12 w-auto max-w-[180px] object-contain"
+                        />
+                      </div>
+
+                      {/* Alt text configuration */}
+                      <div className="md:col-span-2 space-y-1">
+                        <label htmlFor="staged-alt-text" className="block text-xs font-bold text-slate-700">
+                          Logo Alternative Text (Accessibility)
+                        </label>
+                        <input
+                          id="staged-alt-text"
+                          type="text"
+                          value={stagedAltText}
+                          onChange={(e) => setStagedAltText(e.target.value)}
+                          placeholder="e.g. CommerceFlow Mountain Gear"
+                          className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#123C32]/20 focus:border-[#123C32]"
+                          maxLength={100}
+                        />
+                        <p className="text-[10px] text-slate-500">
+                          Descriptive text read by screen readers when viewing the website logo.
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Staged Action Buttons */}
+                    <div className="flex items-center justify-end gap-3 pt-2">
+                      <button
+                        type="button"
+                        onClick={handleDiscardStagedLogo}
+                        disabled={isUploadingLogo}
+                        className="px-4 py-2 rounded-xl text-xs font-semibold bg-white text-slate-700 border border-slate-200 hover:bg-slate-100 transition-colors cursor-pointer"
+                      >
+                        Discard
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={isUploadingLogo}
+                        className="px-4 py-2 rounded-xl text-xs font-semibold bg-white text-slate-700 border border-slate-200 hover:bg-slate-100 transition-colors cursor-pointer"
+                      >
+                        Replace File
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleSaveLogo}
+                        disabled={isUploadingLogo}
+                        className="px-5 py-2 rounded-xl text-xs font-semibold bg-[#123C32] text-white hover:bg-[#0E332B] transition-colors shadow-xs disabled:opacity-50 cursor-pointer"
+                      >
+                        {isUploadingLogo ? 'Saving Logo...' : 'Save Changes'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Reset to Default Logo Section */}
+                {settings.logoUrl && (
+                  <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div>
+                      <span className="text-xs font-bold text-slate-800 block">Restore Default Logo</span>
+                      <span className="text-[11px] text-slate-500 mt-0.5 block">
+                        Remove the custom uploaded logo and restore the original CommerceFlow mountain brand mark across the storefront and admin.
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowResetConfirmModal(true)}
+                      disabled={isResettingLogo || isUploadingLogo}
+                      className="px-4 py-2 rounded-xl text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100 transition-colors shrink-0 cursor-pointer disabled:opacity-50"
+                    >
+                      Reset to Default Logo
+                    </button>
+                  </div>
+                )}
+
+                {/* Explicit Confirmation Modal for Resetting Logo */}
+                {showResetConfirmModal && (
+                  <div
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="reset-modal-title"
+                  >
+                    <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-slate-200 space-y-4">
+                      <div className="w-10 h-10 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center">
+                        <svg className="w-5 h-5 stroke-[2]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+                        </svg>
+                      </div>
+                      <div>
+                        <h4 id="reset-modal-title" className="text-sm font-bold text-slate-900">
+                          Reset Website Logo to Default?
+                        </h4>
+                        <p className="text-xs text-slate-600 mt-1.5 leading-relaxed">
+                          Are you sure you want to reset the website logo? This will remove the custom branding asset and restore the original CommerceFlow mountain logo across all storefront and administrative headers.
+                        </p>
+                        <p className="text-[11px] text-slate-400 mt-2">
+                          Note: This action does not delete products, campaigns, or customer orders.
+                        </p>
+                      </div>
+                      <div className="flex items-center justify-end gap-3 pt-2">
+                        <button
+                          type="button"
+                          onClick={() => setShowResetConfirmModal(false)}
+                          disabled={isResettingLogo}
+                          className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleConfirmResetLogo}
+                          disabled={isResettingLogo}
+                          className="px-4 py-2 rounded-xl text-xs font-semibold bg-rose-600 text-white hover:bg-rose-700 transition-colors shadow-xs disabled:opacity-50 cursor-pointer"
+                        >
+                          {isResettingLogo ? 'Resetting...' : 'Confirm Reset'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Storefront Announcement Bar Tab */}
+            {activeTab === 'announcement' && (
+              <div className="bg-white rounded-2xl border border-[#E4E8E5] p-6 sm:p-8 space-y-6 shadow-2xs">
+                {/* Section Header */}
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-100 pb-4">
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900">
+                      Storefront Announcement Bar
+                    </h3>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Configure the notification banner displayed at the very top of all public storefront pages.
+                    </p>
+                  </div>
+                  <div>
+                    {announcementInput.trim() === '🏕️ Free shipping on orders over $50' ? (
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200">
+                        <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+                        Default Announcement
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                        Custom Active Announcement
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Announcement Success Alert */}
+                {announcementSuccess && (
+                  <div
+                    role="status"
+                    className="p-4 rounded-xl text-xs font-semibold flex items-center justify-between border bg-emerald-50 text-emerald-800 border-emerald-200"
+                  >
+                    <span>{announcementSuccess}</span>
+                    <button
+                      type="button"
+                      onClick={() => setAnnouncementSuccess(null)}
+                      className="text-emerald-700 hover:text-emerald-900 font-bold ml-4 cursor-pointer"
+                    >
+                      &times;
+                    </button>
+                  </div>
+                )}
+
+                {/* Announcement Error Alert */}
+                {announcementError && (
+                  <div
+                    role="alert"
+                    className="p-4 rounded-xl text-xs font-semibold flex items-center justify-between border bg-rose-50 text-rose-800 border-rose-200"
+                  >
+                    <span>{announcementError}</span>
+                    <button
+                      type="button"
+                      onClick={() => setAnnouncementError(null)}
+                      className="text-rose-700 hover:text-rose-900 font-bold ml-4 cursor-pointer"
+                    >
+                      &times;
+                    </button>
+                  </div>
+                )}
+
+                {/* Live Storefront Preview */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                      Live Storefront Preview
+                    </label>
+                    <span className="text-[11px] text-slate-400">
+                      Matches public header utility bar
+                    </span>
+                  </div>
+                  <div className="p-4 rounded-2xl bg-slate-900/5 border border-slate-200/80">
+                    <div className="bg-[#0E332B] text-[#EEF5F1] text-xs py-2.5 px-4 rounded-xl border border-[#123C32] shadow-sm">
+                      <div className="flex items-center justify-between gap-4">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="font-medium text-[11px] sm:text-xs tracking-wide truncate">
+                            {announcementInput.trim() || '🏕️ Free shipping on orders over $50'}
+                          </span>
+                        </div>
+                        <div className="hidden sm:flex items-center gap-4 text-[11px] text-[#d5e8dd] shrink-0 opacity-75">
+                          <span>Track Order</span>
+                          <span>|</span>
+                          <span>Help</span>
+                          <span>|</span>
+                          <span>Contact</span>
+                          <span className="hidden md:inline">|</span>
+                          <span className="hidden md:inline font-semibold text-white">USD / EN</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Editable Announcement Input */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label htmlFor="announcement-input" className="block text-xs font-bold text-slate-700">
+                      Announcement Message
+                    </label>
+                    <span
+                      className={`text-[11px] font-mono ${
+                        announcementInput.length > 200 ? 'text-rose-600 font-bold' : 'text-slate-400'
+                      }`}
+                    >
+                      {announcementInput.length} / 200 characters
+                    </span>
+                  </div>
+                  <textarea
+                    id="announcement-input"
+                    rows={3}
+                    maxLength={200}
+                    value={announcementInput}
+                    onChange={(e) => {
+                      setAnnouncementInput(e.target.value);
+                      if (announcementError) setAnnouncementError(null);
+                    }}
+                    placeholder="e.g. 🏕️ Free shipping on orders over $50"
+                    className="w-full px-4 py-3 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#123C32]/20 focus:border-[#123C32] leading-relaxed resize-none"
+                  />
+                  <p className="text-[11px] text-slate-500">
+                    Emojis are fully supported (e.g. 🏕️, 🎉, ⚡, 🚚, 📦). Use this bar for promotional campaigns, store notices, or delivery deadlines.
+                  </p>
+                </div>
+
+                {/* Action Controls */}
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pt-4 border-t border-slate-100">
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleSaveAnnouncement}
+                      disabled={
+                        isSavingAnnouncement ||
+                        isResettingAnnouncement ||
+                        !announcementInput.trim() ||
+                        announcementInput.length > 200
+                      }
+                      className="px-5 py-2.5 rounded-xl text-xs font-bold bg-[#123C32] text-white hover:bg-[#0E332B] transition-colors shadow-xs disabled:opacity-50 cursor-pointer flex items-center gap-2"
+                    >
+                      {isSavingAnnouncement ? (
+                        <>
+                          <svg className="animate-spin h-3.5 w-3.5 text-white" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                          </svg>
+                          <span>Saving Announcement...</span>
+                        </>
+                      ) : (
+                        <span>Save Announcement</span>
+                      )}
+                    </button>
+                    {announcementInput !== (settings.announcementText || '🏕️ Free shipping on orders over $50') && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAnnouncementInput(settings.announcementText || '🏕️ Free shipping on orders over $50');
+                          setAnnouncementError(null);
+                        }}
+                        disabled={isSavingAnnouncement || isResettingAnnouncement}
+                        className="px-4 py-2.5 rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors cursor-pointer"
+                      >
+                        Discard Changes
+                      </button>
+                    )}
+                  </div>
+
+                  <div>
+                    <button
+                      type="button"
+                      onClick={() => setShowAnnouncementResetModal(true)}
+                      disabled={isSavingAnnouncement || isResettingAnnouncement}
+                      className="px-4 py-2.5 rounded-xl text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100 transition-colors cursor-pointer disabled:opacity-50"
+                    >
+                      Reset to Default Message
+                    </button>
+                  </div>
+                </div>
+
+                {/* Reset Confirmation Modal */}
+                {showAnnouncementResetModal && (
+                  <div
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="reset-announcement-modal-title"
+                  >
+                    <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-slate-200 space-y-4">
+                      <div className="w-10 h-10 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center">
+                        <svg className="w-5 h-5 stroke-[2]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+                        </svg>
+                      </div>
+                      <div>
+                        <h4 id="reset-announcement-modal-title" className="text-sm font-bold text-slate-900">
+                          Reset Announcement to Default?
+                        </h4>
+                        <p className="text-xs text-slate-600 mt-1.5 leading-relaxed">
+                          Are you sure you want to restore the default announcement? This will replace your custom message with the default: <span className="font-semibold text-slate-800">"🏕️ Free shipping on orders over $50"</span>.
+                        </p>
+                      </div>
+                      <div className="flex items-center justify-end gap-3 pt-2">
+                        <button
+                          type="button"
+                          onClick={() => setShowAnnouncementResetModal(false)}
+                          disabled={isResettingAnnouncement}
+                          className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleConfirmResetAnnouncement}
+                          disabled={isResettingAnnouncement}
+                          className="px-4 py-2 rounded-xl text-xs font-semibold bg-rose-600 text-white hover:bg-rose-700 transition-colors shadow-xs disabled:opacity-50 cursor-pointer"
+                        >
+                          {isResettingAnnouncement ? 'Resetting...' : 'Confirm Reset'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -451,24 +1275,121 @@ export default function AdminSettingsPage({
               </div>
             )}
 
+            {/* Payment Methods Configuration */}
+            {activeTab === 'payments' && (
+              <div className="bg-white rounded-2xl border border-[#E4E8E5] p-6 sm:p-8 space-y-6 shadow-2xs">
+                <div className="border-b border-slate-100 pb-3">
+                  <h3 className="text-sm font-bold text-slate-900">
+                    Storefront Payment Methods
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Enable or disable customer payment options at checkout. Controls are enforced authoritatively by backend order creation and payment gateways.
+                  </p>
+                </div>
+
+                <div className="space-y-4">
+                  {/* Cash on Delivery (COD) Control */}
+                  <div className="p-4 sm:p-5 rounded-2xl border border-slate-200/90 bg-slate-50/60 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2.5">
+                        <span className="text-xs font-bold text-slate-900">Cash on Delivery (COD)</span>
+                        <span
+                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                            settings.codEnabled !== false
+                              ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                              : 'bg-slate-100 text-slate-600 border-slate-200'
+                          }`}
+                        >
+                          {settings.codEnabled !== false ? 'Enabled' : 'Disabled'}
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-600 max-w-xl leading-relaxed">
+                        Allow customers to pay in cash upon receiving their order. When disabled, COD is hidden from customer checkout and backend orders submitted with COD are rejected.
+                      </p>
+                    </div>
+
+                    <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                      <input
+                        type="checkbox"
+                        checked={settings.codEnabled !== false}
+                        onChange={(e) => handleChange('codEnabled', e.target.checked)}
+                        className="sr-only peer"
+                        aria-label="Toggle Cash on Delivery"
+                      />
+                      <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#123C32]" />
+                    </label>
+                  </div>
+
+                  {/* UPI Payments Control */}
+                  <div className="p-4 sm:p-5 rounded-2xl border border-slate-200/90 bg-slate-50/60 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2.5">
+                        <span className="text-xs font-bold text-slate-900">UPI Payments (via Razorpay)</span>
+                        <span
+                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                            settings.upiEnabled !== false
+                              ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                              : 'bg-slate-100 text-slate-600 border-slate-200'
+                          }`}
+                        >
+                          {settings.upiEnabled !== false ? 'Enabled' : 'Disabled'}
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-600 max-w-xl leading-relaxed">
+                        Allow customers to pay instantly using any UPI application (GPay, PhonePe, Paytm, BHIM). When disabled, the direct UPI option is hidden and direct UPI order initiation is blocked.
+                      </p>
+                    </div>
+
+                    <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                      <input
+                        type="checkbox"
+                        checked={settings.upiEnabled !== false}
+                        onChange={(e) => handleChange('upiEnabled', e.target.checked)}
+                        className="sr-only peer"
+                        aria-label="Toggle UPI Payments"
+                      />
+                      <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#123C32]" />
+                    </label>
+                  </div>
+
+                  {/* Cards, NetBanking & Wallets (Core Gateway) */}
+                  <div className="p-4 sm:p-5 rounded-2xl border border-slate-200/90 bg-slate-50/40 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2.5">
+                        <span className="text-xs font-bold text-slate-900">Credit / Debit Cards, NetBanking, Wallets</span>
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold border bg-blue-50 text-blue-800 border-blue-200">
+                          Always Active
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-500 max-w-xl leading-relaxed">
+                        Core online gateway capabilities provided by Razorpay. Always enabled to ensure reliable credit/debit card processing.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Save Buttons Bar */}
-            <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100">
-              <button
-                type="button"
-                onClick={loadSettings}
-                disabled={isSaving}
-                className="px-4 py-2.5 rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors cursor-pointer"
-              >
-                Reset
-              </button>
-              <button
-                type="submit"
-                disabled={isSaving}
-                className="px-5 py-2.5 rounded-xl text-xs font-semibold bg-[#123C32] text-white hover:bg-[#0E332B] transition-colors shadow-xs disabled:opacity-50 cursor-pointer"
-              >
-                {isSaving ? 'Saving Settings...' : 'Save Settings'}
-              </button>
-            </div>
+            {activeTab !== 'branding' && (
+              <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={loadSettings}
+                  disabled={isSaving}
+                  className="px-4 py-2.5 rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors cursor-pointer"
+                >
+                  Reset
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSaving}
+                  className="px-5 py-2.5 rounded-xl text-xs font-semibold bg-[#123C32] text-white hover:bg-[#0E332B] transition-colors shadow-xs disabled:opacity-50 cursor-pointer"
+                >
+                  {isSaving ? 'Saving Settings...' : 'Save Settings'}
+                </button>
+              </div>
+            )}
           </form>
         </div>
       )}

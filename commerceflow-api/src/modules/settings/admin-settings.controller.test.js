@@ -2,7 +2,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import StoreSettings from "./store-settings.model.js";
 import {
   getStoreSettings,
-  updateStoreSettings
+  updateStoreSettings,
+  resetAnnouncement
 } from "./admin-settings.controller.js";
 
 describe("Admin Settings Controller Unit Tests", () => {
@@ -189,6 +190,81 @@ describe("Admin Settings Controller Unit Tests", () => {
           $setOnInsert: { singletonKey: "default_store_settings" }
         },
         expect.any(Object)
+      );
+    });
+
+    it("persists updated announcementText targeted by singletonKey", async () => {
+      req.body = {
+        announcementText: "🎉 Holiday Sale: 25% off sitewide!"
+      };
+
+      const updatedSettings = {
+        _id: "settings123",
+        singletonKey: "default_store_settings",
+        announcementText: "🎉 Holiday Sale: 25% off sitewide!"
+      };
+
+      vi.spyOn(StoreSettings, "findOneAndUpdate").mockReturnValue({
+        lean: vi.fn().mockResolvedValue(updatedSettings)
+      });
+
+      await updateStoreSettings(req, res, next);
+
+      expect(StoreSettings.findOneAndUpdate).toHaveBeenCalledWith(
+        { singletonKey: "default_store_settings" },
+        {
+          $set: {
+            announcementText: "🎉 Holiday Sale: 25% off sitewide!"
+          },
+          $setOnInsert: { singletonKey: "default_store_settings" }
+        },
+        expect.any(Object)
+      );
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: true,
+          data: expect.objectContaining({
+            settings: updatedSettings
+          })
+        })
+      );
+    });
+  });
+
+  describe("resetAnnouncement", () => {
+    it("resets storefront announcement to default message", async () => {
+      const defaultAnnouncement = "🏕️ Free shipping on orders over $50";
+      const updatedSettings = {
+        _id: "settings123",
+        singletonKey: "default_store_settings",
+        announcementText: defaultAnnouncement
+      };
+
+      vi.spyOn(StoreSettings, "findOneAndUpdate").mockReturnValue({
+        lean: vi.fn().mockResolvedValue(updatedSettings)
+      });
+
+      await resetAnnouncement(req, res, next);
+
+      expect(StoreSettings.findOneAndUpdate).toHaveBeenCalledWith(
+        { singletonKey: "default_store_settings" },
+        {
+          $set: {
+            announcementText: defaultAnnouncement
+          },
+          $setOnInsert: { singletonKey: "default_store_settings" }
+        },
+        expect.any(Object)
+      );
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: true,
+          data: expect.objectContaining({
+            announcementText: defaultAnnouncement
+          })
+        })
       );
     });
   });

@@ -51,6 +51,16 @@ function createMockElement(tag, doc) {
       }
     },
     dispatchEvent: () => true,
+    click: () => {
+      const reactPropsKey = Object.keys(el).find((k) => k.startsWith('__reactProps$'));
+      if (reactPropsKey && el[reactPropsKey]?.onClick) {
+        el[reactPropsKey].onClick({ type: 'click', preventDefault: () => {}, stopPropagation: () => {} });
+        return;
+      }
+      if (listeners['click']) {
+        listeners['click'].forEach((fn) => fn({ type: 'click', preventDefault: () => {}, stopPropagation: () => {} }));
+      }
+    },
     appendChild: (c) => {
       c.parentNode = el;
       children.push(c);
@@ -224,12 +234,145 @@ describe('AdminSettingsPage UI Integration Tests', () => {
     const text = container.textContent;
     assert.ok(text.includes('Store Settings'), 'Should display page title');
     assert.ok(text.includes('Store Profile'), 'Should display Store Profile tab');
+    assert.ok(text.includes('Website Branding'), 'Should display Website Branding tab');
+    assert.ok(text.includes('Announcement Bar'), 'Should display Announcement Bar tab');
     assert.ok(text.includes('Fulfillment & Returns'), 'Should display Fulfillment tab');
     assert.ok(text.includes('Inventory Alerts'), 'Should display Inventory Alerts tab');
     assert.ok(text.includes('Save Settings'), 'Should display save button');
 
     await unmount();
   });
+
+  it('switches to Website Branding tab and opens reset confirmation modal', async () => {
+    function findElement(root, predicate) {
+      if (predicate(root)) return root;
+      for (const child of root.childNodes || []) {
+        const found = findElement(child, predicate);
+        if (found) return found;
+      }
+      return null;
+    }
+
+    const mockCustomLogoService = {
+      getStoreSettings: async () => ({
+        settings: {
+          ...mockSettingsData.settings,
+          logoUrl: '/api/v1/settings/logo?v=173000',
+          logoAlt: 'Custom Brand Mark',
+        },
+        systemInfo: mockSettingsData.systemInfo,
+      }),
+      resetLogo: async () => ({ logoUrl: null }),
+    };
+
+    const { container, unmount } = await renderComponent(
+      <AdminSettingsPage settingsService={mockCustomLogoService} />
+    );
+
+    // Find and click the Website Branding tab button
+    const brandingTabBtn = findElement(
+      container,
+      (el) => el.tagName === 'BUTTON' && el.textContent.includes('Website Branding')
+    );
+    assert.ok(brandingTabBtn, 'Website Branding tab button should be found');
+
+    await act(async () => {
+      brandingTabBtn.click();
+    });
+
+    const brandingText = container.textContent;
+    assert.ok(brandingText.includes('Website Branding & Logo Management'), 'Should display branding section title');
+    assert.ok(brandingText.includes('Current Published Logo'), 'Should display current logo section');
+    assert.ok(brandingText.includes('Upload New Logo'), 'Should display upload dropzone');
+    assert.ok(brandingText.includes('Reset to Default Logo'), 'Should display reset button');
+
+    // Find and click the Reset to Default Logo button
+    const resetBtn = findElement(
+      container,
+      (el) => el.tagName === 'BUTTON' && el.textContent.includes('Reset to Default Logo')
+    );
+    assert.ok(resetBtn, 'Reset to Default Logo button should be found');
+
+    await act(async () => {
+      resetBtn.click();
+    });
+
+    const modalText = container.textContent;
+    assert.ok(modalText.includes('Reset Website Logo to Default?'), 'Should display reset confirmation modal title');
+    assert.ok(modalText.includes('This will remove the custom branding asset'), 'Should explain reset consequences');
+    assert.ok(modalText.includes('Confirm Reset'), 'Should display confirm reset action button');
+
+    await unmount();
+  });
+
+  it('switches to Announcement Bar tab, previews announcement, and opens reset confirmation modal', async () => {
+    function findElement(root, predicate) {
+      if (predicate(root)) return root;
+      for (const child of root.childNodes || []) {
+        const found = findElement(child, predicate);
+        if (found) return found;
+      }
+      return null;
+    }
+
+    const mockAnnouncementService = {
+      getStoreSettings: async () => ({
+        settings: {
+          ...mockSettingsData.settings,
+          announcementText: '🔥 Seasonal Flash Sale — 25% Off!',
+        },
+        systemInfo: mockSettingsData.systemInfo,
+      }),
+      updateStoreSettings: async (payload) => ({
+        settings: { ...mockSettingsData.settings, ...payload },
+        systemInfo: mockSettingsData.systemInfo,
+      }),
+      resetAnnouncement: async () => ({
+        announcementText: '🏕️ Free shipping on orders over $50',
+      }),
+    };
+
+    const { container, unmount } = await renderComponent(
+      <AdminSettingsPage settingsService={mockAnnouncementService} />
+    );
+
+    // Find and click the Announcement Bar tab button
+    const announcementTabBtn = findElement(
+      container,
+      (el) => el.tagName === 'BUTTON' && el.textContent.includes('Announcement Bar')
+    );
+    assert.ok(announcementTabBtn, 'Announcement Bar tab button should be found');
+
+    await act(async () => {
+      announcementTabBtn.click();
+    });
+
+    const announcementText = container.textContent;
+    assert.ok(announcementText.includes('Storefront Announcement Bar'), 'Should display announcement section title');
+    assert.ok(announcementText.includes('Live Storefront Preview'), 'Should display live preview title');
+    assert.ok(announcementText.includes('🔥 Seasonal Flash Sale — 25% Off!'), 'Should display current announcement message in preview');
+    assert.ok(announcementText.includes('Save Announcement'), 'Should display save announcement button');
+    assert.ok(announcementText.includes('Reset to Default'), 'Should display reset announcement button');
+
+    // Find and click the Reset to Default button
+    const resetBtn = findElement(
+      container,
+      (el) => el.tagName === 'BUTTON' && el.textContent.includes('Reset to Default')
+    );
+    assert.ok(resetBtn, 'Reset to Default button should be found');
+
+    await act(async () => {
+      resetBtn.click();
+    });
+
+    const modalText = container.textContent;
+    assert.ok(modalText.includes('Reset Announcement to Default?'), 'Should display reset confirmation modal title');
+    assert.ok(modalText.includes('🏕️ Free shipping on orders over $50'), 'Should explain default message in modal');
+    assert.ok(modalText.includes('Confirm Reset'), 'Should display confirm reset action button');
+
+    await unmount();
+  });
+
 
   it('renders error state on API failure', async () => {
     const failingService = {
