@@ -48,10 +48,13 @@ describe("deleteProduct controller - soft delete", () => {
 
     await deleteProduct(req, res, next);
 
-    // Verify soft-delete update was called with isActive: false
+    // Verify soft-delete update was called with isActive: false and fresh changeToken
     expect(findByIdAndUpdateSpy).toHaveBeenCalledWith(
       productId,
-      { isActive: false },
+      {
+        isActive: false,
+        changeToken: expect.stringMatching(/^[0-9a-fA-F]{24}$/)
+      },
       { new: true }
     );
 
@@ -156,7 +159,10 @@ describe("deleteProduct controller - soft delete", () => {
 
     expect(findByIdAndUpdateSpy).toHaveBeenCalledWith(
       productId,
-      { isActive: false },
+      {
+        isActive: false,
+        changeToken: expect.stringMatching(/^[0-9a-fA-F]{24}$/)
+      },
       { new: true }
     );
     expect(findByIdAndDeleteSpy).not.toHaveBeenCalled();
@@ -182,7 +188,10 @@ describe("deleteProduct controller - soft delete", () => {
 
     expect(findByIdAndUpdateSpy).toHaveBeenCalledWith(
       productId,
-      { isActive: false },
+      {
+        isActive: false,
+        changeToken: expect.stringMatching(/^[0-9a-fA-F]{24}$/)
+      },
       { new: true }
     );
     expect(findByIdAndDeleteSpy).not.toHaveBeenCalled();

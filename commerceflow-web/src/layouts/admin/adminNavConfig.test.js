@@ -37,6 +37,7 @@ describe('Admin Navigation Configuration & Role Filtering', () => {
     assert.ok(allItemIds.includes('settings'));
     assert.ok(allItemIds.includes('audit-logs'));
     assert.ok(allItemIds.includes('reports'));
+    assert.ok(allItemIds.includes('banners'));
 
     // Duplicate top-level entries are removed to prevent double-active highlights
     assert.ok(!allItemIds.includes('refunds'), 'Duplicate top-level refunds should be removed');

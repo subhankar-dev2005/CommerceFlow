@@ -88,7 +88,7 @@ describe("Admin Category Controller Unit Tests", () => {
   });
 
   describe("updateAdminCategory (rename)", () => {
-    it("successfully renames a category across products", async () => {
+    it("successfully renames a category across products with per-document atomic changeTokens", async () => {
       req.params = { name: "Footwear" };
       req.body = { newName: "Shoes & Boots" };
 
@@ -96,7 +96,26 @@ describe("Admin Category Controller Unit Tests", () => {
         if (query.category?.$regex) return 0; // Destination category does not exist
         return 5; // Current category exists
       });
-      vi.spyOn(Product, "updateMany").mockResolvedValue({ modifiedCount: 5 });
+
+      const mockProducts = [
+        { _id: "507f1f77bcf86cd799439001" },
+        { _id: "507f1f77bcf86cd799439002" },
+        { _id: "507f1f77bcf86cd799439003" },
+        { _id: "507f1f77bcf86cd799439004" },
+        { _id: "507f1f77bcf86cd799439005" }
+      ];
+
+      vi.spyOn(Product, "find").mockReturnValue({
+        select: vi.fn().mockReturnThis(),
+        lean: vi.fn().mockReturnValue({
+          cursor: vi.fn().mockReturnValue(mockProducts)
+        })
+      });
+
+      const bulkWriteSpy = vi.spyOn(Product, "bulkWrite").mockResolvedValue({
+        matchedCount: 5,
+        modifiedCount: 5
+      });
 
       await updateAdminCategory(req, res, next);
 
@@ -111,6 +130,59 @@ describe("Admin Category Controller Unit Tests", () => {
           }
         })
       );
+
+      expect(bulkWriteSpy).toHaveBeenCalledTimes(1);
+      const [ops] = bulkWriteSpy.mock.calls[0];
+      expect(ops).toHaveLength(5);
+
+      const tokens = new Set();
+      for (let i = 0; i < ops.length; i++) {
+        const op = ops[i];
+        expect(op.updateOne.filter).toEqual({
+          _id: mockProducts[i]._id,
+          category: "Footwear"
+        });
+        expect(op.updateOne.update.$set.category).toBe("Shoes & Boots");
+        expect(op.updateOne.update.$set.changeToken).toMatch(/^[0-9a-fA-F]{24}$/);
+        tokens.add(op.updateOne.update.$set.changeToken);
+      }
+      expect(tokens.size).toBe(5);
+    });
+
+    it("fails with 409 CONCURRENT_MODIFICATION_CONFLICT if a concurrent modification causes matchedCount mismatch", async () => {
+      req.params = { name: "Footwear" };
+      req.body = { newName: "Shoes & Boots" };
+
+      vi.spyOn(Product, "countDocuments").mockImplementation(async (query) => {
+        if (query.category?.$regex) return 0;
+        return 3;
+      });
+
+      const mockProducts = [
+        { _id: "507f1f77bcf86cd799439001" },
+        { _id: "507f1f77bcf86cd799439002" },
+        { _id: "507f1f77bcf86cd799439003" }
+      ];
+
+      vi.spyOn(Product, "find").mockReturnValue({
+        select: vi.fn().mockReturnThis(),
+        lean: vi.fn().mockReturnValue({
+          cursor: vi.fn().mockReturnValue(mockProducts)
+        })
+      });
+
+      vi.spyOn(Product, "bulkWrite").mockResolvedValue({
+        matchedCount: 2,
+        modifiedCount: 2
+      });
+
+      await updateAdminCategory(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(expect.any(AppError));
+      const error = next.mock.calls[0][0];
+      expect(error.statusCode).toBe(409);
+      expect(error.code).toBe("CONCURRENT_MODIFICATION_CONFLICT");
+      expect(error.message).toContain("concurrent modification conflict");
     });
 
     it("returns 409 CATEGORY_ALREADY_EXISTS if destination category already exists in catalog", async () => {
@@ -121,7 +193,7 @@ describe("Admin Category Controller Unit Tests", () => {
         if (query.category?.$regex) return 12; // Destination "Footwear" already exists
         return 4; // Source "Sneakers" exists
       });
-      const updateSpy = vi.spyOn(Product, "updateMany");
+      const updateSpy = vi.spyOn(Product, "bulkWrite");
 
       await updateAdminCategory(req, res, next);
 
@@ -175,18 +247,47 @@ describe("Admin Category Controller Unit Tests", () => {
       expect(error.message).toContain("Cannot delete category 'Footwear' because 3 products are currently assigned");
     });
 
-    it("safely deletes and reassigns products to 'Uncategorized' when cascade=true is passed", async () => {
+    it("safely deletes and reassigns products to 'Uncategorized' with per-document atomic changeTokens", async () => {
       req.params = { name: "Footwear" };
       req.query = { cascade: "true" };
       vi.spyOn(Product, "countDocuments").mockResolvedValue(3);
-      vi.spyOn(Product, "updateMany").mockResolvedValue({ modifiedCount: 3 });
+
+      const mockProducts = [
+        { _id: "507f1f77bcf86cd799439001" },
+        { _id: "507f1f77bcf86cd799439002" },
+        { _id: "507f1f77bcf86cd799439003" }
+      ];
+
+      vi.spyOn(Product, "find").mockReturnValue({
+        select: vi.fn().mockReturnThis(),
+        lean: vi.fn().mockReturnValue({
+          cursor: vi.fn().mockReturnValue(mockProducts)
+        })
+      });
+
+      const bulkWriteSpy = vi.spyOn(Product, "bulkWrite").mockResolvedValue({
+        matchedCount: 3,
+        modifiedCount: 3
+      });
 
       await deleteAdminCategory(req, res, next);
 
-      expect(Product.updateMany).toHaveBeenCalledWith(
-        { category: "Footwear" },
-        { $set: { category: "Uncategorized" } }
-      );
+      expect(bulkWriteSpy).toHaveBeenCalledTimes(1);
+      const [ops] = bulkWriteSpy.mock.calls[0];
+      expect(ops).toHaveLength(3);
+
+      const tokens = new Set();
+      for (let i = 0; i < ops.length; i++) {
+        expect(ops[i].updateOne.filter).toEqual({
+          _id: mockProducts[i]._id,
+          category: "Footwear"
+        });
+        expect(ops[i].updateOne.update.$set.category).toBe("Uncategorized");
+        expect(ops[i].updateOne.update.$set.changeToken).toMatch(/^[0-9a-fA-F]{24}$/);
+        tokens.add(ops[i].updateOne.update.$set.changeToken);
+      }
+      expect(tokens.size).toBe(3);
+
       expect(res.status).toHaveBeenCalledWith(200);
       expect(res.json).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -198,6 +299,36 @@ describe("Admin Category Controller Unit Tests", () => {
           })
         })
       );
+    });
+
+    it("fails with 409 CONCURRENT_MODIFICATION_CONFLICT if cascade reassign encounters unmatched document", async () => {
+      req.params = { name: "Footwear" };
+      req.query = { cascade: "true" };
+      vi.spyOn(Product, "countDocuments").mockResolvedValue(2);
+
+      const mockProducts = [
+        { _id: "507f1f77bcf86cd799439001" },
+        { _id: "507f1f77bcf86cd799439002" }
+      ];
+
+      vi.spyOn(Product, "find").mockReturnValue({
+        select: vi.fn().mockReturnThis(),
+        lean: vi.fn().mockReturnValue({
+          cursor: vi.fn().mockReturnValue(mockProducts)
+        })
+      });
+
+      vi.spyOn(Product, "bulkWrite").mockResolvedValue({
+        matchedCount: 1,
+        modifiedCount: 1
+      });
+
+      await deleteAdminCategory(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(expect.any(AppError));
+      const error = next.mock.calls[0][0];
+      expect(error.statusCode).toBe(409);
+      expect(error.code).toBe("CONCURRENT_MODIFICATION_CONFLICT");
     });
 
     it("allows deletion when 0 products are assigned", async () => {

@@ -3,7 +3,9 @@ import bcrypt from "bcryptjs";
 import User from "./user.model.js";
 import AppError from "../../common/errors/app-error.js";
 import generateToken from "../../utils/generate-token.js";
-import { setAuthCookie } from "../../config/cookie.js";
+import { setAuthCookie, setRefreshCookie } from "../../config/cookie.js";
+import { issueRefreshToken } from "./refresh-token.service.js";
+import { ADMINISTRATIVE_ROLES } from "../../config/roles.js";
 
 async function loginUser(
   req,
@@ -54,18 +56,28 @@ async function loginUser(
       );
     }
 
-    const token =
-      generateToken({
-        userId: user._id.toString(),
-        email: user.email,
-        role: user.role
-      });
+    const tokenPayload = {
+      userId: user._id.toString(),
+      email: user.email,
+      role: user.role
+    };
+    if (user.tokenVersion) {
+      tokenPayload.tokenVersion = user.tokenVersion;
+    }
 
-    // Set the JWT exclusively as an HttpOnly cookie.
-    // The token is NEVER returned in the JSON response body — browser JavaScript
-    // cannot read it. Non-browser API clients must use the Authorization: Bearer
-    // header flow directly with their own token management.
+    const token = generateToken(tokenPayload);
+
+    // Set the access JWT exclusively as an HttpOnly cookie
     setAuthCookie(res, token);
+
+    // Issue and set the cryptographically random refresh token cookie (Path: /api/v1/users)
+    const sessionAudience = ADMINISTRATIVE_ROLES.includes(user.role) ? "admin" : "customer";
+    const { plaintextToken } = await issueRefreshToken({
+      userId: user._id,
+      audience: sessionAudience,
+      tokenVersion: user.tokenVersion ?? 0
+    });
+    setRefreshCookie(res, plaintextToken);
 
     return res
       .status(200)

@@ -37,6 +37,7 @@ export const ADMIN_NAV_SECTIONS = [
         children: [
           { id: 'all-products', label: 'All Products', href: '/admin/products' },
           { id: 'create-product', label: 'Add Product', href: '/admin/products/new' },
+          { id: 'import-products', label: 'Import Products', href: '/admin/products/import' },
         ],
         allowedRoles: ['admin'],
       },
@@ -161,6 +162,14 @@ export const ADMIN_NAV_SECTIONS = [
         label: 'Reports',
         href: '/admin/reports',
         icon: 'reports',
+        status: 'functional',
+        allowedRoles: ['admin'],
+      },
+      {
+        id: 'banners',
+        label: 'Banner Management',
+        href: '/admin/banners',
+        icon: 'banners',
         status: 'functional',
         allowedRoles: ['admin'],
       },

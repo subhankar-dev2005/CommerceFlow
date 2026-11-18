@@ -1,5 +1,6 @@
 import React, { useState, useId, useEffect, useRef } from 'react';
 import { useAuth } from '../../features/auth/useAuth.js';
+import { useBranding } from '../../features/branding/useBranding.js';
 import Button from '../../components/Button.jsx';
 import { navigate } from '../../lib/utils.js';
 import { getSafeAdminRedirect } from '../../lib/redirect.js';
@@ -7,18 +8,23 @@ import { getSafeAdminRedirect } from '../../lib/redirect.js';
 /**
  * AdminLoginPage Component
  *
- * Dedicated administrative login portal for CommerceFlow.
- * Distinct from customer storefront authentication.
- *
- * Features:
- * - Directs exclusively to administrative console (/admin/dashboard)
- * - Safe redirect preservation against open-redirect vulnerabilities
- * - Auto-redirects already authenticated administrators
- * - Clear credential error messaging without leaking sensitive role details
- * - Keyboard accessible, aria-labeled form controls
+ * Dedicated administrative login portal with direct email + password authentication.
+ * In accordance with the Owner Governance Amendment (DEC-01 / DEC-03 Option 3B):
+ * - Direct authentication via email and password only.
+ * - Zero MFA challenge prompts, TOTP inputs, or forced enrollment setup screens.
+ * - Navigates directly to the administrative dashboard upon credential validation.
  */
 export default function AdminLoginPage() {
-  const { user, isAuthenticated, isLoading, loginAdmin, error: authError, clearError } = useAuth();
+  const auth = useAuth();
+  const { user, isAuthenticated, isLoading, loginAdmin, error: authError, clearError } = auth;
+  const { branding, resolvedLogoUrl } = useBranding();
+  const [logoError, setLogoError] = useState(false);
+
+  useEffect(() => {
+    setLogoError(false);
+  }, [resolvedLogoUrl]);
+
+  // Form states
   const [formData, setFormData] = useState({ email: '', password: '' });
   const [fieldErrors, setFieldErrors] = useState({});
   const [serverError, setServerError] = useState('');
@@ -38,27 +44,21 @@ export default function AdminLoginPage() {
 
   // If already authenticated as an administrator, automatically navigate to dashboard
   useEffect(() => {
-    if (!isLoading && isAuthenticated && user?.role === 'admin' && typeof window !== 'undefined') {
+    if (!isLoading && isAuthenticated && (user?.role === 'admin' || user?.role === 'super_admin') && typeof window !== 'undefined') {
       const destination = getRedirectUrl();
       navigate(destination);
     }
   }, [isLoading, isAuthenticated, user]);
 
-  const handleChange = (e) => {
-    const { name, value } = e.target;
-    setFormData((prev) => ({ ...prev, [name]: value }));
-    if (fieldErrors[name]) {
-      setFieldErrors((prev) => ({ ...prev, [name]: '' }));
+  // Password Login Handler
+  const handlePasswordSubmit = async (e) => {
+    e.preventDefault();
+    if (isSubmittingRef.current || isSubmitting) {
+      return;
     }
-    if (serverError) {
-      setServerError('');
-    }
-    if (authError) {
-      clearError();
-    }
-  };
 
-  const validateForm = () => {
+    setServerError('');
+
     const errors = {};
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -73,18 +73,7 @@ export default function AdminLoginPage() {
     }
 
     setFieldErrors(errors);
-    return Object.keys(errors).length === 0;
-  };
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (isSubmittingRef.current || isSubmitting) {
-      return;
-    }
-
-    setServerError('');
-
-    if (!validateForm()) {
+    if (Object.keys(errors).length > 0) {
       return;
     }
 
@@ -92,13 +81,15 @@ export default function AdminLoginPage() {
     setIsSubmitting(true);
 
     try {
-      await loginAdmin({
+      const result = await loginAdmin({
         email: formData.email.trim().toLowerCase(),
         password: formData.password,
       });
 
-      const destination = getRedirectUrl();
-      navigate(destination);
+      if (result?.user) {
+        const destination = getRedirectUrl();
+        navigate(destination);
+      }
     } catch (err) {
       if (err?.code === 'INVALID_CREDENTIALS') {
         setServerError('Invalid administrator email or password.');
@@ -131,15 +122,28 @@ export default function AdminLoginPage() {
   return (
     <div className="min-h-screen bg-[#F4F6F4] flex flex-col justify-center py-12 sm:px-6 lg:px-8">
       <div className="sm:mx-auto sm:w-full sm:max-w-md text-center">
-        {/* Brand Shield Badge */}
-        <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-[#0B2820] text-emerald-400 shadow-md mb-4 border border-[#164032]">
-          <svg className="w-7 h-7 stroke-[2]" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
-          </svg>
-        </div>
+        {/* Brand Shield Badge / Custom Logo */}
+        {resolvedLogoUrl && !logoError ? (
+          <img
+            src={resolvedLogoUrl}
+            alt={branding?.logoAlt || 'CommerceFlow Admin'}
+            className="inline-block w-14 h-14 rounded-2xl object-contain bg-[#0B2820] p-1 shadow-md mb-4 border border-[#164032]"
+            onError={() => setLogoError(true)}
+          />
+        ) : (
+          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-[#0B2820] text-emerald-400 shadow-md mb-4 border border-[#164032]">
+            <svg className="w-7 h-7 stroke-[2]" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
+            </svg>
+          </div>
+        )}
 
-        <h1 className="text-2xl font-bold tracking-tight text-slate-900">CommerceFlow Admin</h1>
-        <p className="mt-1 text-sm text-slate-600">Administrator Sign In</p>
+        <h1 className="text-2xl font-bold tracking-tight text-slate-900">
+          {branding?.storeName ? `${branding.storeName} Admin` : 'CommerceFlow Admin'}
+        </h1>
+        <p className="mt-1 text-sm text-slate-600">
+          Administrator Sign In
+        </p>
       </div>
 
       <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
@@ -173,7 +177,8 @@ export default function AdminLoginPage() {
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-5" noValidate>
+          {/* Direct Password Login Form */}
+          <form onSubmit={handlePasswordSubmit} className="space-y-5" noValidate>
             <div>
               <label htmlFor={emailId} className="block text-xs font-semibold text-slate-700 uppercase tracking-wider">
                 Admin Email
@@ -186,7 +191,12 @@ export default function AdminLoginPage() {
                   autoComplete="username"
                   required
                   value={formData.email}
-                  onChange={handleChange}
+                  onChange={(e) => {
+                    setFormData((p) => ({ ...p, email: e.target.value }));
+                    if (fieldErrors.email) setFieldErrors((p) => ({ ...p, email: '' }));
+                    if (serverError) setServerError('');
+                    if (authError) clearError();
+                  }}
                   disabled={isSubmitting}
                   className={`block w-full px-3.5 py-2.5 rounded-xl border text-sm transition-colors focus:outline-none ${
                     fieldErrors.email
@@ -215,7 +225,12 @@ export default function AdminLoginPage() {
                   autoComplete="current-password"
                   required
                   value={formData.password}
-                  onChange={handleChange}
+                  onChange={(e) => {
+                    setFormData((p) => ({ ...p, password: e.target.value }));
+                    if (fieldErrors.password) setFieldErrors((p) => ({ ...p, password: '' }));
+                    if (serverError) setServerError('');
+                    if (authError) clearError();
+                  }}
                   disabled={isSubmitting}
                   className={`block w-full px-3.5 py-2.5 rounded-xl border text-sm transition-colors focus:outline-none ${
                     fieldErrors.password
@@ -251,6 +266,7 @@ export default function AdminLoginPage() {
             </div>
           </form>
 
+          {/* Footer Back Link */}
           <div className="mt-6 pt-6 border-t border-slate-100 text-center">
             <a
               href="/"

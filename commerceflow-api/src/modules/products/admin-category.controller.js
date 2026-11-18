@@ -1,6 +1,98 @@
+import mongoose from "mongoose";
 import Product from "./product.model.js";
 import AppError from "../../common/errors/app-error.js";
 import { recordAdminAuditEvent, AUDIT_EVENT_TYPES } from "../audit/admin-audit.service.js";
+
+export const CATEGORY_BULK_BATCH_SIZE = 100;
+
+/**
+ * Atomically reassigns product categories in bounded batches with per-document change tokens
+ * and optimistic concurrency guards.
+ *
+ * @param {Object} params
+ * @param {string} params.fromCategory - The current category being matched
+ * @param {string} params.toCategory - The new category to assign
+ * @param {number} [params.batchSize=100] - Number of operations per bulkWrite chunk
+ * @param {mongoose.ClientSession|null} [params.session=null] - Optional MongoDB session
+ * @returns {Promise<{ modifiedCount: number }>}
+ */
+export async function bulkReassignCategory({
+  fromCategory,
+  toCategory,
+  batchSize = CATEGORY_BULK_BATCH_SIZE,
+  session = null
+}) {
+  let totalModified = 0;
+  const bulkOptions = { ordered: false };
+  if (session) {
+    bulkOptions.session = session;
+  }
+
+  // Stream matching products with a cursor to bound memory consumption
+  const query = Product.find({ category: fromCategory }).select("_id").lean();
+  if (session && typeof query.session === "function") {
+    query.session(session);
+  }
+  const cursor = typeof query.cursor === "function" ? query.cursor({ batchSize }) : await query;
+
+  let ops = [];
+
+  for await (const doc of cursor) {
+    const freshToken = new mongoose.Types.ObjectId().toHexString();
+
+    ops.push({
+      updateOne: {
+        filter: {
+          _id: doc._id,
+          category: fromCategory
+        },
+        update: {
+          $set: {
+            category: toCategory,
+            changeToken: freshToken
+          }
+        }
+      }
+    });
+
+    if (ops.length >= batchSize) {
+      const res = await Product.bulkWrite(ops, bulkOptions);
+      const matched = res?.matchedCount ?? res?.nMatched ?? 0;
+      const modified = res?.modifiedCount ?? res?.nModified ?? 0;
+
+      if (matched < ops.length) {
+        throw new AppError(
+          "Category bulk update encountered a concurrent modification conflict. Some products could not be updated.",
+          409,
+          [],
+          "CONCURRENT_MODIFICATION_CONFLICT"
+        );
+      }
+
+      totalModified += modified;
+      ops = [];
+    }
+  }
+
+  if (ops.length > 0) {
+    const res = await Product.bulkWrite(ops, bulkOptions);
+    const matched = res?.matchedCount ?? res?.nMatched ?? 0;
+    const modified = res?.modifiedCount ?? res?.nModified ?? 0;
+
+    if (matched < ops.length) {
+      throw new AppError(
+        "Category bulk update encountered a concurrent modification conflict. Some products could not be updated.",
+        409,
+        [],
+        "CONCURRENT_MODIFICATION_CONFLICT"
+      );
+    }
+
+    totalModified += modified;
+  }
+
+  return { modifiedCount: totalModified };
+}
 
 function escapeRegex(text) {
   return text.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, "\\$&");
@@ -110,10 +202,10 @@ export async function updateAdminCategory(req, res, next) {
       );
     }
 
-    const result = await Product.updateMany(
-      { category: currentName },
-      { $set: { category: cleanNewName } }
-    );
+    const result = await bulkReassignCategory({
+      fromCategory: currentName,
+      toCategory: cleanNewName
+    });
 
     // Audit event logging
     try {
@@ -170,10 +262,10 @@ export async function deleteAdminCategory(req, res, next) {
 
     let reassignedCount = 0;
     if (productCount > 0 && isCascade) {
-      const reassignResult = await Product.updateMany(
-        { category: categoryName },
-        { $set: { category: "Uncategorized" } }
-      );
+      const reassignResult = await bulkReassignCategory({
+        fromCategory: categoryName,
+        toCategory: "Uncategorized"
+      });
       reassignedCount = reassignResult.modifiedCount;
     }
 

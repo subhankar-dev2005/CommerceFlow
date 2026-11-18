@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import { describe, it, expect } from "vitest";
 import Product from "./product.model.js";
 
@@ -364,6 +365,14 @@ describe("P1.6.2 Product Model — Variant Schema Tests", () => {
       ]);
     });
 
+    it("defines single-field index on vendorId for tenant lookup", () => {
+      const indexes = Product.schema.indexes();
+      expect(indexes).toContainEqual([
+        { vendorId: 1 },
+        {}
+      ]);
+    });
+
     it("does NOT define an unsafe unique multikey index on variants.sku", () => {
       const indexes = Product.schema.indexes();
       const skuIndex = indexes.find(
@@ -374,6 +383,28 @@ describe("P1.6.2 Product Model — Variant Schema Tests", () => {
       // via an embedded multikey unique index in MongoDB without causing duplicate key collisions
       // on null/missing values across documents. It must be enforced at the application layer.
       expect(skuIndex).toBeUndefined();
+    });
+  });
+
+  describe("Vendor Ownership Field & Backward Compatibility", () => {
+    it("allows products to be created and validated without vendorId (defaults to null)", async () => {
+      const product = new Product(createValidProductData());
+      await product.validate();
+
+      expect(product.vendorId).toBeNull();
+    });
+
+    it("allows products to be created and validated with a valid-shaped vendorId", async () => {
+      const mockVendorId = new mongoose.Types.ObjectId();
+      const product = new Product(
+        createValidProductData({
+          vendorId: mockVendorId
+        })
+      );
+      await product.validate();
+
+      expect(product.vendorId).toBeDefined();
+      expect(product.vendorId.toString()).toBe(mockVendorId.toString());
     });
   });
 
@@ -402,6 +433,72 @@ describe("P1.6.2 Product Model — Variant Schema Tests", () => {
       expect(json.variants[0].sku).toBe("SKU-108");
       expect(json.variants[0].stock).toBe(8);
       expect(json.variants[0]._id).toBeUndefined();
+    });
+  });
+
+  describe("Change Token Field & Concurrency Invariants", () => {
+    it("automatically assigns a fresh 24-character hex changeToken upon product instantiation", async () => {
+      const product = new Product(createValidProductData());
+      await product.validate();
+
+      expect(product.changeToken).toBeDefined();
+      expect(typeof product.changeToken).toBe("string");
+      expect(product.changeToken).toMatch(/^[0-9a-fA-F]{24}$/);
+    });
+
+    it("generates distinct change tokens for sequentially instantiated products", () => {
+      const product1 = new Product(createValidProductData());
+      const product2 = new Product(createValidProductData());
+
+      expect(product1.changeToken).not.toBe(product2.changeToken);
+    });
+
+    it("accepts and preserves an explicitly supplied valid 24-character hexadecimal changeToken", async () => {
+      const explicitToken = new mongoose.Types.ObjectId().toHexString();
+      const product = new Product(
+        createValidProductData({
+          changeToken: explicitToken
+        })
+      );
+      await product.validate();
+
+      expect(product.changeToken).toBe(explicitToken);
+    });
+
+    it("fails validation when changeToken is not a 24-character hex string", async () => {
+      const invalidTokens = [
+        "short_token",
+        "12345678901234567890123z", // non-hex character 'z'
+        "1234567890123456789012345", // 25 characters
+        "not-a-hex-string-at-all!",
+        123456789012345678901234
+      ];
+
+      for (const token of invalidTokens) {
+        const product = new Product(
+          createValidProductData({
+            changeToken: token
+          })
+        );
+
+        await expect(product.validate()).rejects.toThrow();
+      }
+    });
+
+    it("fails validation when changeToken is explicitly set to null or empty string", async () => {
+      const nullProduct = new Product(
+        createValidProductData({
+          changeToken: null
+        })
+      );
+      await expect(nullProduct.validate()).rejects.toThrow();
+
+      const emptyProduct = new Product(
+        createValidProductData({
+          changeToken: ""
+        })
+      );
+      await expect(emptyProduct.validate()).rejects.toThrow();
     });
   });
 });

@@ -24,5 +24,10 @@ describe("Product Schema Indexes", () => {
       { isActive: 1, price: 1 },
       {}
     ]);
+
+    expect(indexes).toContainEqual([
+      { vendorId: 1 },
+      {}
+    ]);
   });
 });

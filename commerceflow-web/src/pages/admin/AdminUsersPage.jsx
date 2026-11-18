@@ -565,6 +565,7 @@ export default function AdminUsersPage({ search: searchProp = '' }) {
               <option value="all">All Roles</option>
               <option value="admin">Admin</option>
               <option value="customer">Customer</option>
+              <option value="super_admin">Super Admin</option>
             </select>
           </div>
 
@@ -712,6 +713,7 @@ export default function AdminUsersPage({ search: searchProp = '' }) {
                   {users.map((u) => {
                     const userId = u._id || u.id;
                     const isSelf = String(userId) === String(currentAdminId);
+                    const isSuperAdmin = u.role === 'super_admin';
                     const isAdmin = u.role === 'admin';
                     const isActive = u.isActive;
 
@@ -736,7 +738,11 @@ export default function AdminUsersPage({ search: searchProp = '' }) {
 
                         {/* Role */}
                         <td className="py-3.5 px-4 whitespace-nowrap">
-                          {isAdmin ? (
+                          {isSuperAdmin ? (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold border bg-purple-50 text-purple-700 border-purple-200">
+                              Super Admin
+                            </span>
+                          ) : isAdmin ? (
                             <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold border bg-[#1B4D3E]/10 text-[#1B4D3E] border-[#1B4D3E]/20">
                               Admin
                             </span>
@@ -769,7 +775,18 @@ export default function AdminUsersPage({ search: searchProp = '' }) {
                         <td className="py-3.5 px-4 text-right whitespace-nowrap">
                           <div className="flex items-center justify-end gap-2">
                             {/* Role Toggle Button */}
-                            {isAdmin ? (
+                            {isSuperAdmin ? (
+                              <Button
+                                type="button"
+                                variant="secondary"
+                                size="sm"
+                                disabled={true}
+                                title="Super Admin accounts cannot be modified from this view"
+                                className="font-semibold text-xs min-h-[32px] text-slate-400 bg-slate-50 border-slate-200 cursor-not-allowed opacity-60"
+                              >
+                                Super Admin
+                              </Button>
+                            ) : isAdmin ? (
                               <Button
                                 type="button"
                                 variant="secondary"
@@ -805,12 +822,18 @@ export default function AdminUsersPage({ search: searchProp = '' }) {
                                 type="button"
                                 variant="secondary"
                                 size="sm"
-                                disabled={isSelf}
+                                disabled={isSelf || isSuperAdmin}
                                 onClick={() => {
                                   setStatusError(null);
                                   setStatusTarget({ user: u, nextStatus: false });
                                 }}
-                                title={isSelf ? 'You cannot deactivate your own account' : 'Deactivate account'}
+                                title={
+                                  isSelf
+                                    ? 'You cannot deactivate your own account'
+                                    : isSuperAdmin
+                                    ? 'Super Admin accounts cannot be deactivated from this view'
+                                    : 'Deactivate account'
+                                }
                                 className="font-semibold text-xs min-h-[32px] text-rose-600 hover:bg-rose-50 hover:border-rose-200 border-slate-200 disabled:opacity-50 disabled:cursor-not-allowed"
                               >
                                 Deactivate
@@ -820,11 +843,13 @@ export default function AdminUsersPage({ search: searchProp = '' }) {
                                 type="button"
                                 variant="secondary"
                                 size="sm"
+                                disabled={isSuperAdmin}
                                 onClick={() => {
                                   setStatusError(null);
                                   setStatusTarget({ user: u, nextStatus: true });
                                 }}
-                                className="font-semibold text-xs min-h-[32px] text-emerald-700 hover:bg-emerald-50 hover:border-emerald-200 border-slate-200"
+                                title={isSuperAdmin ? 'Super Admin accounts cannot be activated from this view' : 'Activate account'}
+                                className="font-semibold text-xs min-h-[32px] text-emerald-700 hover:bg-emerald-50 hover:border-emerald-200 border-slate-200 disabled:opacity-50 disabled:cursor-not-allowed"
                               >
                                 Activate
                               </Button>

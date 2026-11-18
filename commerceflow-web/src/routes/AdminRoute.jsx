@@ -69,7 +69,7 @@ export default function AdminRoute({ children }) {
   }
 
   // User is authenticated, but not an admin (strictly aligns with backend role contract)
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
   if (!isAdmin) {
     return (
       <div className="min-h-[60vh] flex items-center justify-center px-4 py-12">

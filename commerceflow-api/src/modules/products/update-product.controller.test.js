@@ -609,7 +609,8 @@ describe("updateProduct controller - variant update wiring (P2.1.3)", () => {
       expect(findByIdAndUpdateSpy).toHaveBeenCalledWith(
         productId,
         {
-          name: "Renamed Variant Product"
+          name: "Renamed Variant Product",
+          changeToken: expect.stringMatching(/^[0-9a-fA-F]{24}$/)
         },
         { new: true, runValidators: true }
       );
@@ -703,7 +704,8 @@ describe("updateProduct controller - variant update wiring (P2.1.3)", () => {
         productId,
         {
           name: "Updated Mug Name",
-          stock: 75
+          stock: 75,
+          changeToken: expect.stringMatching(/^[0-9a-fA-F]{24}$/)
         },
         { new: true, runValidators: true }
       );

@@ -52,6 +52,11 @@ const AdminBrandsPage = lazy(() => import('./pages/admin/AdminBrandsPage.jsx'));
 const AdminVendorsPage = lazy(() => import('./pages/admin/AdminVendorsPage.jsx'));
 const AdminSettingsPage = lazy(() => import('./pages/admin/AdminSettingsPage.jsx'));
 const AdminReportsPage = lazy(() => import('./pages/admin/AdminReportsPage.jsx'));
+const AdminCouponsPage = lazy(() => import('./pages/admin/AdminCouponsPage.jsx'));
+const AdminBannersPage = lazy(() => import('./pages/admin/AdminBannersPage.jsx'));
+const AdminCampaignsPage = lazy(() => import('./pages/admin/AdminCampaignsPage.jsx'));
+const AdminReviewsPage = lazy(() => import('./pages/admin/AdminReviewsPage.jsx'));
+const AdminBulkImportPage = lazy(() => import('./pages/admin/AdminBulkImportPage.jsx'));
 
 /**
  * Accessible fallback skeleton displayed while lazy route chunks load.
@@ -221,6 +226,9 @@ export default function App() {
     if (pathname === '/admin/products/new') {
       return <AdminProductCreatePage />;
     }
+    if (pathname === '/admin/products/import') {
+      return <AdminBulkImportPage />;
+    }
     const adminProductEditMatch = pathname.match(/^\/admin\/products\/([^/?#]+)\/edit$/);
     if (adminProductEditMatch) {
       const productId = adminProductEditMatch[1];
@@ -257,6 +265,12 @@ export default function App() {
     if (pathname === '/admin/refunds') {
       return <AdminRefundsPage search={search} />;
     }
+    if (pathname === '/admin/reviews') {
+      return <AdminReviewsPage />;
+    }
+    if (pathname === '/admin/coupons') {
+      return <AdminCouponsPage search={search} />;
+    }
     if (pathname === '/admin/users') {
       return <AdminUsersPage search={search} />;
     }
@@ -271,15 +285,21 @@ export default function App() {
     if (pathname === '/admin/vendors') {
       return <AdminVendorsPage />;
     }
-    if (pathname === '/admin/settings') {
+    if (pathname === '/admin/settings' || pathname.startsWith('/admin/settings/')) {
       return <AdminSettingsPage />;
     }
     if (pathname === '/admin/audit-logs') {
       return <AdminAuditLogsPage search={search} />;
     }
     if (pathname === '/admin/reports') {
-      return <AdminReportsPage />;
-    }
+        return <AdminReportsPage />;
+      }
+      if (pathname === '/admin/banners') {
+        return <AdminBannersPage />;
+      }
+      if (pathname === '/admin/campaigns' || pathname === '/admin/promotions') {
+        return <AdminCampaignsPage />;
+      }
 
     // Admin 404 fallback if nested admin route not matched
     if (pathname.startsWith('/admin')) {

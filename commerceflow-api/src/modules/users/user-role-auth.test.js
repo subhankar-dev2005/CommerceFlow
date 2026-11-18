@@ -13,8 +13,10 @@ describe("User Role Authentication & Authorization Security Tests", () => {
   let app;
   const adminId = "507f1f77bcf86cd799439001";
   const customerId = "507f1f77bcf86cd799439002";
+  const superAdminId = "507f1f77bcf86cd799439003";
   let adminToken;
   let customerToken;
+  let superAdminToken;
 
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -28,6 +30,11 @@ describe("User Role Authentication & Authorization Security Tests", () => {
       userId: customerId,
       email: "customer@example.com",
       role: "customer"
+    });
+    superAdminToken = generateToken({
+      userId: superAdminId,
+      email: "superadmin@example.com",
+      role: "super_admin"
     });
   });
 
@@ -125,6 +132,52 @@ describe("User Role Authentication & Authorization Security Tests", () => {
         })
       );
     });
+
+    it("B2. Client cannot register as super_admin (ignores client-supplied role: 'super_admin')", async () => {
+      vi.spyOn(User, "findOne").mockResolvedValue(null);
+      vi.spyOn(bcrypt, "hash").mockResolvedValue("hashed-password");
+
+      const createdUser = {
+        _id: customerId,
+        name: "SuperAdmin Attacker",
+        email: "superattacker@example.com",
+        role: "customer",
+        createdAt: new Date()
+      };
+      const createSpy = vi.spyOn(User, "create").mockResolvedValue(createdUser);
+
+      const req = {
+        body: {
+          name: "SuperAdmin Attacker",
+          email: "superattacker@example.com",
+          password: "Password123!",
+          role: "super_admin" // Attempt privilege escalation to super_admin
+        },
+        requestId: "test-req-id"
+      };
+      const res = {
+        status: vi.fn().mockReturnThis(),
+        json: vi.fn().mockReturnThis()
+      };
+      const next = vi.fn();
+
+      await registerUser(req, res, next);
+
+      expect(createSpy).toHaveBeenCalledWith({
+        name: "SuperAdmin Attacker",
+        email: "superattacker@example.com",
+        password: "hashed-password"
+      });
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: {
+            user: expect.objectContaining({
+              role: "customer"
+            })
+          }
+        })
+      );
+    });
   });
 
   describe("C & D. Legitimate Admin Login & Token Role Propagation", () => {
@@ -177,10 +230,10 @@ describe("User Role Authentication & Authorization Security Tests", () => {
       );
       expect(roleTestPayload.data.token).toBeUndefined();
 
-      // JWT must be in the HttpOnly cookie
-      expect(res.cookie).toHaveBeenCalledTimes(1);
-      expect(res.cookie.mock.calls[0][0]).toBe("auth_token");
-      expect(res.cookie.mock.calls[0][2]).toMatchObject({ httpOnly: true });
+      // Auth and refresh tokens must be set as HttpOnly cookies
+      expect(res.cookie).toHaveBeenCalledTimes(2);
+      expect(res.cookie).toHaveBeenCalledWith("auth_token", expect.any(String), expect.objectContaining({ httpOnly: true }));
+      expect(res.cookie).toHaveBeenCalledWith("refresh_token", expect.any(String), expect.objectContaining({ httpOnly: true }));
     });
 
     it("D. Current user endpoint (/me) preserves authoritative admin role from database", async () => {
@@ -269,6 +322,51 @@ describe("User Role Authentication & Authorization Security Tests", () => {
         })
       );
     });
+
+    it("Profile update (PATCH /me) cannot escalate user role to 'super_admin'", async () => {
+      const mockCustomer = {
+        _id: customerId,
+        name: "Jane Customer",
+        email: "jane@example.com",
+        role: "customer",
+        isActive: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        save: vi.fn().mockResolvedValue(true)
+      };
+
+      vi.spyOn(User, "findById").mockResolvedValue(mockCustomer);
+
+      const req = {
+        user: { _id: customerId },
+        body: {
+          name: "Updated Jane",
+          role: "super_admin" // Attempt privilege escalation via profile update
+        },
+        requestId: "test-req-id"
+      };
+      const res = {
+        status: vi.fn().mockReturnThis(),
+        json: vi.fn().mockReturnThis()
+      };
+      const next = vi.fn();
+
+      await updateProfile(req, res, next);
+
+      expect(mockCustomer.role).toBe("customer");
+      expect(mockCustomer.name).toBe("Updated Jane");
+      expect(mockCustomer.save).toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: {
+            user: expect.objectContaining({
+              role: "customer"
+            })
+          }
+        })
+      );
+    });
   });
 
   describe("E & F. Admin vs Customer Route Authorization Gates", () => {
@@ -305,6 +403,24 @@ describe("User Role Authentication & Authorization Security Tests", () => {
       expect(res.status).toBe(403);
       expect(res.body.success).toBe(false);
       expect(res.body.error.code).toBe("FORBIDDEN");
+    });
+
+    it("G. Admin authorization accepts legitimate super_admin on /admin/test via expansion", async () => {
+      vi.spyOn(User, "findById").mockResolvedValue({
+        _id: superAdminId,
+        email: "superadmin@example.com",
+        role: "super_admin",
+        isActive: true
+      });
+
+      const res = await request(app)
+        .get("/api/v1/admin/test")
+        .set("Authorization", `Bearer ${superAdminToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.message).toBe("Welcome Admin");
+      expect(res.body.data.user.role).toBe("super_admin");
     });
   });
 });

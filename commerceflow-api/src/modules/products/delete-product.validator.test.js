@@ -113,7 +113,10 @@ describe("DELETE product validation & boundary", () => {
 
     expect(findByIdAndUpdateSpy).toHaveBeenCalledWith(
       validId,
-      { isActive: false },
+      {
+        isActive: false,
+        changeToken: expect.stringMatching(/^[0-9a-fA-F]{24}$/)
+      },
       { new: true }
     );
     expect(res.status).toHaveBeenCalledWith(200);

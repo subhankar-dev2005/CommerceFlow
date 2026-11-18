@@ -12,6 +12,8 @@ const mongoUri =
 const safetyCheck = verifyDatabaseTarget({
   mongoUri,
   nodeEnv: process.env.NODE_ENV,
+  stagingOverrideEnvVar: "ALLOW_STAGING_ADMIN_PROMOTION",
+  confirmDatabase: process.env.CONFIRM_TARGET_DB,
   overrideEnvVar: "ALLOW_PRODUCTION_ADMIN_PROMOTION",
 });
 
@@ -20,16 +22,20 @@ if (!safetyCheck.allowed) {
   console.error("ADMIN BOOTSTRAP SAFETY BLOCK");
   console.error("==================================================");
   console.error(
-    `Refusing to promote user: ${safetyCheck.reason}.`
+    `Refusing to promote user: ${safetyCheck.reason}`
   );
   console.error(`Target Host: ${safetyCheck.target.host}`);
   console.error(`Target DB:   ${safetyCheck.target.database}`);
   console.error(`Environment: ${safetyCheck.environment}`);
   console.error("");
   console.error(
-    "To target a production or remote database intentionally, set:"
+    "For remote staging databases, the following are strictly required:"
   );
-  console.error("  ALLOW_PRODUCTION_ADMIN_PROMOTION=true");
+  console.error("  NODE_ENV=staging");
+  console.error("  ALLOW_STAGING_ADMIN_PROMOTION=true");
+  console.error(`  CONFIRM_TARGET_DB=${safetyCheck.target.database !== "unknown" && safetyCheck.target.database !== "none" ? safetyCheck.target.database : "<database_name>"}`);
+  console.error("");
+  console.error("Note: Production administrative mutation is strictly locked out.");
   console.error("==================================================");
   process.exit(1);
 }
@@ -51,9 +57,9 @@ if (!emailRegex.test(email)) {
 
 async function run() {
   try {
-    if (safetyCheck.isProductionOverride) {
+    if (safetyCheck.isStagingOverride) {
       console.warn("==================================================");
-      console.warn("WARNING: EXECUTING WITH PRODUCTION OVERRIDE");
+      console.warn("WARNING: EXECUTING WITH STAGING OVERRIDE");
       console.warn("==================================================");
     }
 

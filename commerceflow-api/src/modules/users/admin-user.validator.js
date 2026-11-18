@@ -25,8 +25,8 @@ export const getAdminUsersSchema = z.object({
       .optional(),
 
     role: z
-      .enum(["all", "admin", "customer"], {
-        errorMap: () => ({ message: "Role filter must be 'all', 'admin', or 'customer'" })
+      .enum(["all", "admin", "customer", "super_admin"], {
+        errorMap: () => ({ message: "Role filter must be 'all', 'admin', 'customer', or 'super_admin'" })
       })
       .optional()
       .default("all"),
@@ -117,8 +117,8 @@ export const updateUserRoleSchema = z.object({
   }),
 
   body: z.object({
-    role: z.enum(["admin", "customer"], {
-      errorMap: () => ({ message: "Role must be 'admin' or 'customer'" })
+    role: z.enum(["admin", "customer", "super_admin"], {
+      errorMap: () => ({ message: "Role must be 'admin', 'customer', or 'super_admin'" })
     })
   }),
 

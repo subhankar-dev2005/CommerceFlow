@@ -113,6 +113,17 @@ describe('Admin User Service Unit Tests', () => {
       assert.ok(calledUrl.includes('sortBy=name'));
       assert.ok(calledUrl.includes('sortOrder=asc'));
     });
+
+    it('serializes super_admin role filter parameter correctly', async () => {
+      let calledUrl = null;
+      apiClient.get = async (url) => {
+        calledUrl = url;
+        return MOCK_LIST_RESPONSE;
+      };
+
+      await getAdminUsers({ role: 'super_admin' });
+      assert.ok(calledUrl.includes('role=super_admin'), 'Must serialize role=super_admin');
+    });
   });
 
   describe('createAdminUser', () => {

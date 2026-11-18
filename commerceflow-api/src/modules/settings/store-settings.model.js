@@ -81,6 +81,58 @@ const storeSettingsSchema = new mongoose.Schema(
     isMaintenanceMode: {
       type: Boolean,
       default: false
+    },
+
+    codEnabled: {
+      type: Boolean,
+      default: true
+    },
+
+    upiEnabled: {
+      type: Boolean,
+      default: true
+    },
+
+    announcementText: {
+      type: String,
+      default: "🏕️ Free shipping on orders over $50",
+      trim: true,
+      maxlength: 200
+    },
+
+    logoUrl: {
+      type: String,
+      default: null,
+      trim: true
+    },
+
+    logoAlt: {
+      type: String,
+      default: "CommerceFlow Logo",
+      trim: true,
+      maxlength: 100
+    },
+
+    logoStorageKey: {
+      type: String,
+      default: null,
+      trim: true
+    },
+
+    logoMimeType: {
+      type: String,
+      default: null,
+      trim: true
+    },
+
+    logoFileSize: {
+      type: Number,
+      default: null
+    },
+
+    logoUpdatedAt: {
+      type: Date,
+      default: null
     }
   },
   {

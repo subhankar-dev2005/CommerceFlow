@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import request from "supertest";
 import bcrypt from "bcryptjs";
 import { createApp } from "../../app.js";
@@ -7,6 +7,8 @@ import AdminAuditLog from "./admin-audit-log.model.js";
 import generateToken from "../../utils/generate-token.js";
 import { AUTH_COOKIE_NAME } from "../../config/cookie.js";
 import { authRateLimitMiddleware } from "../../common/middleware/auth-rate-limit.middleware.js";
+import { env } from "../../config/env.js";
+import { logger } from "../../config/logger.js";
 import {
   AUDIT_EVENT_TYPES,
   sanitizeAuditMetadata,
@@ -1078,6 +1080,198 @@ describe("Production Administrative Audit Logging & Read API Tests", () => {
 
       expect(res.status).toBe(404);
       expect(auditCreateSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("31-36. Production Durability & In-Memory Fallback Safety", () => {
+    const originalNodeEnv = process.env.NODE_ENV;
+    const originalEnvNodeEnv = env.NODE_ENV;
+
+    const fakeReq = {
+      user: {
+        _id: adminId1,
+        email: "admin1@example.com",
+        role: "admin"
+      },
+      ip: "127.0.0.1",
+      headers: {
+        "user-agent": "AuditDurabilityTest/1.0"
+      },
+      get(headerName) {
+        if (headerName.toLowerCase() === "user-agent") {
+          return this.headers["user-agent"];
+        }
+        return undefined;
+      }
+    };
+
+    afterEach(() => {
+      process.env.NODE_ENV = originalNodeEnv;
+      env.NODE_ENV = originalEnvNodeEnv;
+      vi.restoreAllMocks();
+    });
+
+    it("31. in test environment, unmocked disconnected database returns safe in-memory fallback", async () => {
+      process.env.NODE_ENV = "test";
+      env.NODE_ENV = "test";
+      vi.restoreAllMocks();
+
+      // Ensure AdminAuditLog.create is unmocked and db is disconnected
+      expect(AdminAuditLog.create._isMockFunction).toBeUndefined();
+      expect(AdminAuditLog.db?.readyState).toBe(0);
+
+      const auditRecord = await recordAdminAuditEvent({
+        req: fakeReq,
+        eventType: AUDIT_EVENT_TYPES.ADMIN_MFA_LOGIN_SUCCESS
+      });
+
+      expect(auditRecord).toBeDefined();
+      expect(auditRecord._id).toBe("000000000000000000000000");
+      expect(auditRecord.eventType).toBe("ADMIN_MFA_LOGIN_SUCCESS");
+      expect(auditRecord.actorUserId).toBe(adminId1);
+      expect(auditRecord.actorEmail).toBe("admin1@example.com");
+      expect(auditRecord.actorRole).toBe("admin");
+      expect(auditRecord.userAgent).toBe("AuditDurabilityTest/1.0");
+      expect(auditRecord.createdAt).toBeInstanceOf(Date);
+    });
+
+    it("32. in production environment, fallback is strictly bypassed and persistence failure throws and logs error", async () => {
+      process.env.NODE_ENV = "production";
+      env.NODE_ENV = "production";
+
+      const loggerErrorSpy = vi.spyOn(logger, "error");
+      const dbError = new Error("MongoServerSelectionError: connection refused");
+      vi.spyOn(AdminAuditLog, "create").mockRejectedValue(dbError);
+
+      await expect(
+        recordAdminAuditEvent({
+          req: fakeReq,
+          eventType: AUDIT_EVENT_TYPES.ADMIN_MFA_LOGIN_SUCCESS
+        })
+      ).rejects.toThrow("MongoServerSelectionError: connection refused");
+
+      expect(AdminAuditLog.create).toHaveBeenCalledTimes(1);
+      expect(loggerErrorSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          err: dbError,
+          eventType: AUDIT_EVENT_TYPES.ADMIN_MFA_LOGIN_SUCCESS,
+          actorUserId: adminId1
+        }),
+        "Failed to persist administrative audit log event"
+      );
+    });
+
+    it("33. in staging environment, fallback is strictly bypassed and persistence failure throws", async () => {
+      process.env.NODE_ENV = "staging";
+      env.NODE_ENV = "staging";
+
+      const loggerErrorSpy = vi.spyOn(logger, "error");
+      const dbError = new Error("MongooseError: Operation buffer timed out");
+      vi.spyOn(AdminAuditLog, "create").mockRejectedValue(dbError);
+
+      await expect(
+        recordAdminAuditEvent({
+          req: fakeReq,
+          eventType: AUDIT_EVENT_TYPES.ADMIN_MFA_RECOVERY_CODES_REGENERATED
+        })
+      ).rejects.toThrow("MongooseError: Operation buffer timed out");
+
+      expect(AdminAuditLog.create).toHaveBeenCalledTimes(1);
+      expect(loggerErrorSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          err: dbError,
+          eventType: AUDIT_EVENT_TYPES.ADMIN_MFA_RECOVERY_CODES_REGENERATED,
+          actorUserId: adminId1
+        }),
+        "Failed to persist administrative audit log event"
+      );
+    });
+
+    it("34. process.env is production while config env is test -> fallback strictly blocked, attempts persistence", async () => {
+      process.env.NODE_ENV = "production";
+      env.NODE_ENV = "test";
+
+      const loggerErrorSpy = vi.spyOn(logger, "error");
+      const dbError = new Error("MongoNetworkError: connection timed out");
+      vi.spyOn(AdminAuditLog, "create").mockRejectedValue(dbError);
+
+      await expect(
+        recordAdminAuditEvent({
+          req: fakeReq,
+          eventType: AUDIT_EVENT_TYPES.ADMIN_MFA_LOGIN_SUCCESS
+        })
+      ).rejects.toThrow("MongoNetworkError: connection timed out");
+
+      expect(AdminAuditLog.create).toHaveBeenCalledTimes(1);
+      expect(loggerErrorSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          err: dbError,
+          eventType: AUDIT_EVENT_TYPES.ADMIN_MFA_LOGIN_SUCCESS,
+          actorUserId: adminId1
+        }),
+        "Failed to persist administrative audit log event"
+      );
+    });
+
+    it("35. process.env is test while config env is production -> fallback strictly blocked, attempts persistence", async () => {
+      process.env.NODE_ENV = "test";
+      env.NODE_ENV = "production";
+
+      const loggerErrorSpy = vi.spyOn(logger, "error");
+      const dbError = new Error("MongoNetworkError: connection timed out");
+      vi.spyOn(AdminAuditLog, "create").mockRejectedValue(dbError);
+
+      await expect(
+        recordAdminAuditEvent({
+          req: fakeReq,
+          eventType: AUDIT_EVENT_TYPES.ADMIN_MFA_LOGIN_SUCCESS
+        })
+      ).rejects.toThrow("MongoNetworkError: connection timed out");
+
+      expect(AdminAuditLog.create).toHaveBeenCalledTimes(1);
+      expect(loggerErrorSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          err: dbError,
+          eventType: AUDIT_EVENT_TYPES.ADMIN_MFA_LOGIN_SUCCESS,
+          actorUserId: adminId1
+        }),
+        "Failed to persist administrative audit log event"
+      );
+    });
+
+    it("36. environment values are absent or non-test -> fallback strictly blocked, attempts persistence", async () => {
+      process.env.NODE_ENV = "development";
+      env.NODE_ENV = "development";
+
+      const loggerErrorSpy = vi.spyOn(logger, "error");
+      const dbError = new Error("MongoNetworkError: connection timed out");
+      vi.spyOn(AdminAuditLog, "create").mockRejectedValue(dbError);
+
+      await expect(
+        recordAdminAuditEvent({
+          req: fakeReq,
+          eventType: AUDIT_EVENT_TYPES.ADMIN_MFA_LOGIN_SUCCESS
+        })
+      ).rejects.toThrow("MongoNetworkError: connection timed out");
+
+      expect(AdminAuditLog.create).toHaveBeenCalledTimes(1);
+      expect(loggerErrorSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          err: dbError,
+          eventType: AUDIT_EVENT_TYPES.ADMIN_MFA_LOGIN_SUCCESS,
+          actorUserId: adminId1
+        }),
+        "Failed to persist administrative audit log event"
+      );
+    });
+
+    it("37. AUDIT_EVENT_TYPES exports canonical ADMIN_LOGIN_SUCCESS constant", () => {
+      expect(AUDIT_EVENT_TYPES.ADMIN_LOGIN_SUCCESS).toBe("ADMIN_LOGIN_SUCCESS");
+    });
+
+    it("38. AUDIT_EVENT_TYPES exports canonical ADMIN_MFA_DISABLED and ADMIN_MFA_DISABLE_FAILED constants", () => {
+      expect(AUDIT_EVENT_TYPES.ADMIN_MFA_DISABLED).toBe("ADMIN_MFA_DISABLED");
+      expect(AUDIT_EVENT_TYPES.ADMIN_MFA_DISABLE_FAILED).toBe("ADMIN_MFA_DISABLE_FAILED");
     });
   });
 });

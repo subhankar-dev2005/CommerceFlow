@@ -203,6 +203,24 @@ const productSchema = new mongoose.Schema(
     variants: {
       type: [variantSchema],
       default: []
+    },
+
+    vendorId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Vendor",
+      default: null
+    },
+
+    changeToken: {
+      type: String,
+      required: [true, "Change token is required"],
+      default: () => new mongoose.Types.ObjectId().toHexString(),
+      validate: {
+        validator: function (v) {
+          return typeof v === "string" && /^[0-9a-fA-F]{24}$/.test(v);
+        },
+        message: "Change token must be a 24-character hexadecimal string"
+      }
     }
   },
   {
@@ -240,6 +258,10 @@ productSchema.index({
 
 productSchema.index({
   "variants.variantId": 1
+});
+
+productSchema.index({
+  vendorId: 1
 });
 
 const Product = mongoose.model(

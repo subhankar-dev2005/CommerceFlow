@@ -60,7 +60,11 @@ const environmentSchema = z
       .number()
       .int()
       .min(1)
-      .default(60)
+      .default(60),
+
+    MFA_ENCRYPTION_KEY: z
+      .string()
+      .optional()
   })
   .superRefine((data, ctx) => {
     if (data.NODE_ENV === "production") {
@@ -120,6 +124,35 @@ const environmentSchema = z
       }
     }
 
+    const isStrictMfaEnv =
+      data.NODE_ENV === "production" || data.NODE_ENV === "staging";
+
+    if (
+      data.MFA_ENCRYPTION_KEY !== undefined &&
+      data.MFA_ENCRYPTION_KEY.trim().length > 0
+    ) {
+      const trimmedKey = data.MFA_ENCRYPTION_KEY.trim();
+      if (!/^[0-9a-fA-F]{64}$/.test(trimmedKey)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            "MFA_ENCRYPTION_KEY must be a 64-character hexadecimal string",
+          path: ["MFA_ENCRYPTION_KEY"]
+        });
+      } else if (isStrictMfaEnv) {
+        const KNOWN_WEAK_MFA_KEYS = [
+          "0000000000000000000000000000000000000000000000000000000000000000",
+          "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        ];
+        if (KNOWN_WEAK_MFA_KEYS.includes(trimmedKey.toLowerCase())) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `MFA_ENCRYPTION_KEY cannot be a known default placeholder in ${data.NODE_ENV}`,
+            path: ["MFA_ENCRYPTION_KEY"]
+          });
+        }
+      }
+    }
 
     if (data.CORS_ORIGIN !== undefined) {
       const origins = data.CORS_ORIGIN.split(",").map((item) => item.trim());
@@ -147,10 +180,19 @@ const environmentSchema = z
       origins = ["http://localhost:3000"];
     }
 
+    let mfaKey;
+    if (data.MFA_ENCRYPTION_KEY && data.MFA_ENCRYPTION_KEY.trim().length > 0) {
+      mfaKey = data.MFA_ENCRYPTION_KEY.trim();
+    } else if (data.NODE_ENV === "development" || data.NODE_ENV === "test") {
+      mfaKey =
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    }
+
     return {
       ...data,
       CORS_ORIGIN: origins,
-      RAZORPAY_WEBHOOK_SECRET: data.RAZORPAY_WEBHOOK_SECRET?.trim()
+      RAZORPAY_WEBHOOK_SECRET: data.RAZORPAY_WEBHOOK_SECRET?.trim(),
+      MFA_ENCRYPTION_KEY: mfaKey
     };
   });
 

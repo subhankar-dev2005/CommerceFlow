@@ -294,6 +294,37 @@ describe('Admin User Management Frontend Tests', () => {
     await unmount();
   });
 
+  it('2b. super_admin can access /admin/users via AdminRoute and render administrator list', async () => {
+    mockWin.location.pathname = '/admin/users';
+
+    const originalGetUsers = adminUserService.getAdminUsers;
+    adminUserService.getAdminUsers = async () => ({
+      users: [MOCK_ADMIN_USER],
+      pagination: { page: 1, limit: 10, totalUsers: 1, totalPages: 1 },
+    });
+
+    const superAdminContext = {
+      user: { id: 'super-1', email: 'super@example.com', role: 'super_admin' },
+      isAuthenticated: true,
+      isLoading: false,
+    };
+
+    const { container, unmount } = await renderComponent(
+      React.createElement(
+        AuthContext.Provider,
+        { value: superAdminContext },
+        React.createElement(AdminRoute, null, React.createElement(AdminUsersPage, null))
+      )
+    );
+
+    const text = container.textContent;
+    assert.ok(!text.includes('Access Denied'), 'Must not display Access Denied for super_admin role');
+    assert.ok(text.includes('Administrators'), 'Must render Administrators page content');
+
+    adminUserService.getAdminUsers = originalGetUsers;
+    await unmount();
+  });
+
   it('3. admin can render administrator list', async () => {
     const originalGetUsers = adminUserService.getAdminUsers;
     adminUserService.getAdminUsers = async () => ({
@@ -321,6 +352,45 @@ describe('Admin User Management Frontend Tests', () => {
     assert.ok(text.includes('primary@example.com'), 'Must render first admin email');
     assert.ok(text.includes('Secondary Admin'), 'Must render second admin');
     assert.ok(text.includes('secondary@example.com'), 'Must render second admin email');
+
+    adminUserService.getAdminUsers = originalGetUsers;
+    await unmount();
+  });
+
+  it('3b. super_admin accounts in list render Super Admin badge and action controls are guarded against regular admins', async () => {
+    const originalGetUsers = adminUserService.getAdminUsers;
+    const mockSuperAdminAccount = {
+      _id: '507f1f77bcf86cd799439099',
+      id: '507f1f77bcf86cd799439099',
+      name: 'Root Super Admin',
+      email: 'root@commerceflow.internal',
+      role: 'super_admin',
+      isActive: true,
+      createdAt: '2026-01-01T00:00:00.000Z',
+    };
+
+    adminUserService.getAdminUsers = async () => ({
+      users: [MOCK_ADMIN_USER, mockSuperAdminAccount],
+      pagination: { page: 1, limit: 10, totalUsers: 2, totalPages: 1 },
+    });
+
+    const adminContext = {
+      user: MOCK_ADMIN_USER,
+      isAuthenticated: true,
+      isLoading: false,
+    };
+
+    const { container, unmount } = await renderComponent(
+      React.createElement(
+        AuthContext.Provider,
+        { value: adminContext },
+        React.createElement(AdminUsersPage, null)
+      )
+    );
+
+    const text = container.textContent;
+    assert.ok(text.includes('Root Super Admin'), 'Must render Super Admin user');
+    assert.ok(text.includes('Super Admin'), 'Must render Super Admin role badge');
 
     adminUserService.getAdminUsers = originalGetUsers;
     await unmount();

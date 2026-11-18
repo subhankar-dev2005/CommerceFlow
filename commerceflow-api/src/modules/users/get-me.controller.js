@@ -25,6 +25,7 @@ async function getMe(req, res, next) {
           email: user.email,
           role: user.role,
           isActive: user.isActive,
+          twoFactorEnabled: Boolean(user.twoFactorEnabled),
           createdAt: user.createdAt,
           updatedAt: user.updatedAt
         }

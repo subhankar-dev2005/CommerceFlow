@@ -52,9 +52,37 @@ export const updateStoreSettingsSchema = z.object({
         .min(1, "Return window must be at least 1 day")
         .max(90, "Return window cannot exceed 90 days")
         .optional(),
-      isMaintenanceMode: z.boolean().optional()
+      isMaintenanceMode: z.boolean({ invalid_type_error: "isMaintenanceMode must be a boolean" }).optional(),
+      codEnabled: z.boolean({ invalid_type_error: "codEnabled must be a boolean" }).optional(),
+      upiEnabled: z.boolean({ invalid_type_error: "upiEnabled must be a boolean" }).optional(),
+      announcementText: z
+        .string({ invalid_type_error: "Announcement text must be a string" })
+        .trim()
+        .min(1, "Announcement text cannot be empty")
+        .max(200, "Announcement text cannot exceed 200 characters")
+        .optional(),
+      logoAlt: z
+        .string()
+        .trim()
+        .max(100, "Alt text cannot exceed 100 characters")
+        .optional()
     })
     .refine((data) => Object.keys(data).length > 0, {
       message: "At least one settings field must be provided for update"
     })
+});
+
+export const uploadLogoSchema = z.object({
+  params: z.object({}).optional(),
+  query: z.object({}).optional(),
+  body: z.object({
+    image: z
+      .string({ required_error: "Image data is required" })
+      .min(1, "Image data cannot be empty"),
+    altText: z
+      .string()
+      .trim()
+      .max(100, "Alt text cannot exceed 100 characters")
+      .optional()
+  })
 });

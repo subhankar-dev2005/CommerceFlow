@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import mongoose from "mongoose";
 import Product from "./product.model.js";
 import AppError from "../../common/errors/app-error.js";
 import { reconcileProductSkus } from "./sku-registry.service.js";
@@ -139,6 +140,8 @@ async function updateProduct(
 
     let product;
     try {
+      updateData.changeToken = new mongoose.Types.ObjectId().toHexString();
+
       product = await Product.findByIdAndUpdate(
         id,
         updateData,

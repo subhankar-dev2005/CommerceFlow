@@ -1,6 +1,6 @@
 import { apiClient, ApiError } from '../../lib/apiClient.js';
 
-export const VALID_USER_ROLES = ['admin', 'customer', 'all'];
+export const VALID_USER_ROLES = ['admin', 'customer', 'super_admin', 'all'];
 export const VALID_USER_STATUSES = ['active', 'inactive', 'all'];
 export const VALID_SORT_FIELDS = ['createdAt', 'name', 'email', 'role'];
 export const VALID_SORT_ORDERS = ['asc', 'desc'];

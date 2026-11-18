@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import Product from "./product.model.js";
 import AppError from "../../common/errors/app-error.js";
 import escapeRegex from "../../utils/escape-regex.js";
@@ -189,7 +190,10 @@ export async function updateAdminProductStatus(req, res, next) {
 
     const product = await Product.findByIdAndUpdate(
       id,
-      { isActive: Boolean(isActive) },
+      {
+        isActive: Boolean(isActive),
+        changeToken: new mongoose.Types.ObjectId().toHexString()
+      },
       { new: true, runValidators: true }
     )
       .select("-__v")

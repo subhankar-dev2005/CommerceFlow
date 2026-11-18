@@ -69,19 +69,159 @@ export async function findQualifyingOrder(userId, productId) {
  * - If no published reviews exist, resets ratingCount to 0 and ratingAverage to 0.
  * - Rating average is deterministically rounded to 2 decimal places.
  * - Fails with 404 PRODUCT_NOT_FOUND if the product does not exist in the database.
+ */
+
+// Concurrency control: per-product in-flight recalculation tracker
+const inFlightRecalculations = new Map();
+
+export function clearActiveRecalculations() {
+  inFlightRecalculations.clear();
+}
+
+/**
+ * Executes a single atomic aggregation and update pass for a product.
  *
- * @param {string|mongoose.Types.ObjectId} productId - Target product ObjectId
+ * @param {string|mongoose.Types.ObjectId} productId
+ * @param {mongoose.ClientSession|null} [session=null]
  * @returns {Promise<{ ratingAverage: number, ratingCount: number, product: object }>}
  */
-export async function recalculateProductRating(productId) {
+async function executeRatingAggregation(productId, session = null) {
+  const productObjectId = new mongoose.Types.ObjectId(productId);
+
+  const productExists = await Product.exists({ _id: productObjectId });
+  if (!productExists) {
+    throw new AppError("Product not found", 404, [], "PRODUCT_NOT_FOUND");
+  }
+
+  const pipeline = [
+    {
+      $match: {
+        product: productObjectId,
+        status: "published"
+      }
+    },
+    {
+      $group: {
+        _id: "$product",
+        ratingCount: { $sum: 1 },
+        ratingAverage: { $avg: "$rating" }
+      }
+    }
+  ];
+
+  let agg = Review.aggregate(pipeline);
+  if (session && typeof agg?.session === "function") {
+    agg = agg.session(session);
+  }
+  const stats = await agg;
+
+  const hasPublishedReviews = Array.isArray(stats) && stats.length > 0 && stats[0].ratingCount > 0;
+  const ratingCount = hasPublishedReviews ? stats[0].ratingCount : 0;
+  const ratingAverage = hasPublishedReviews
+    ? Math.round(stats[0].ratingAverage * 100) / 100
+    : 0;
+
+  const updateOptions = { new: true };
+  if (session) {
+    updateOptions.session = session;
+  }
+
+  const updatedProduct = await Product.findByIdAndUpdate(
+    productObjectId,
+    {
+      $set: {
+        ratingAverage,
+        ratingCount,
+        changeToken: new mongoose.Types.ObjectId().toHexString()
+      }
+    },
+    updateOptions
+  );
+
+  return {
+    ratingAverage,
+    ratingCount,
+    product: updatedProduct
+  };
+}
+
+/**
+ * Aggregates all published reviews for a product and atomically updates Product.ratingAverage
+ * and Product.ratingCount using an idempotent MongoDB $set operation.
+ *
+ * Concurrency & Invariant rules:
+ * - Coalesces concurrent recalculation requests for the same product to prevent stale write overwrites.
+ * - If a recalculation is already executing when a new request arrives, a rerun pass is automatically
+ *   scheduled so that all intermediate review mutations are captured.
+ * - Only reviews with status === "published" contribute to rating metrics.
+ * - Hidden and flagged reviews are strictly excluded.
+ * - If no published reviews exist, resets ratingCount to 0 and ratingAverage to 0.
+ * - Rating average is deterministically rounded to 2 decimal places.
+ * - Fails with 404 PRODUCT_NOT_FOUND if the product does not exist in the database.
+ *
+ * @param {string|mongoose.Types.ObjectId} productId - Target product ObjectId
+ * @param {Object} [options={}]
+ * @param {mongoose.ClientSession} [options.session]
+ * @returns {Promise<{ ratingAverage: number, ratingCount: number, product: object }>}
+ */
+export async function recalculateProductRating(productId, options = {}) {
+  if (!isValidObjectId(productId)) {
+    throw new AppError("Invalid product ID", 400, [], "INVALID_ID");
+  }
+
+  const session = options?.session || null;
+  const key = String(productId);
+
+  // If running within an explicit MongoDB session, execute directly with that session
+  if (session) {
+    return executeRatingAggregation(productId, session);
+  }
+
+  // If a recalculation for this product is already in flight, mark that another pass is needed
+  // and share the resolving promise to ensure latest state is captured.
+  if (inFlightRecalculations.has(key)) {
+    const entry = inFlightRecalculations.get(key);
+    entry.rerunNeeded = true;
+    return entry.promise;
+  }
+
+  const entry = {
+    rerunNeeded: false,
+    promise: null
+  };
+
+  entry.promise = (async () => {
+    try {
+      let result;
+      // Loop until all pending rerun requests that arrived during execution have been processed
+      do {
+        entry.rerunNeeded = false;
+        result = await executeRatingAggregation(productId, null);
+      } while (entry.rerunNeeded);
+      return result;
+    } finally {
+      inFlightRecalculations.delete(key);
+    }
+  })();
+
+  inFlightRecalculations.set(key, entry);
+  return entry.promise;
+}
+
+/**
+ * Inspects whether a product's stored ratingAverage and ratingCount match the actual published reviews.
+ *
+ * @param {string|mongoose.Types.ObjectId} productId
+ * @returns {Promise<{ isConsistent: boolean, stored: { ratingAverage: number, ratingCount: number }, actual: { ratingAverage: number, ratingCount: number } }>}
+ */
+export async function checkProductRatingConsistency(productId) {
   if (!isValidObjectId(productId)) {
     throw new AppError("Invalid product ID", 400, [], "INVALID_ID");
   }
 
   const productObjectId = new mongoose.Types.ObjectId(productId);
-
-  const productExists = await Product.exists({ _id: productObjectId });
-  if (!productExists) {
+  const product = await Product.findById(productObjectId).select("ratingAverage ratingCount").lean();
+  if (!product) {
     throw new AppError("Product not found", 404, [], "PRODUCT_NOT_FOUND");
   }
 
@@ -102,27 +242,47 @@ export async function recalculateProductRating(productId) {
   ]);
 
   const hasPublishedReviews = Array.isArray(stats) && stats.length > 0 && stats[0].ratingCount > 0;
-  const ratingCount = hasPublishedReviews ? stats[0].ratingCount : 0;
-  const ratingAverage = hasPublishedReviews
-    ? Math.round(stats[0].ratingAverage * 100) / 100
-    : 0;
+  const actualCount = hasPublishedReviews ? stats[0].ratingCount : 0;
+  const actualAverage = hasPublishedReviews ? Math.round(stats[0].ratingAverage * 100) / 100 : 0;
 
-  const updatedProduct = await Product.findByIdAndUpdate(
-    productObjectId,
-    {
-      $set: {
-        ratingAverage,
-        ratingCount
-      }
-    },
-    {
-      new: true
-    }
-  );
+  const storedAverage = Number(product.ratingAverage) || 0;
+  const storedCount = Number(product.ratingCount) || 0;
+
+  const isConsistent = storedAverage === actualAverage && storedCount === actualCount;
 
   return {
-    ratingAverage,
-    ratingCount,
-    product: updatedProduct
+    isConsistent,
+    stored: { ratingAverage: storedAverage, ratingCount: storedCount },
+    actual: { ratingAverage: actualAverage, ratingCount: actualCount }
+  };
+}
+
+/**
+ * Repairs a product's rating metrics by reconciling stored fields against published reviews.
+ * Returns before and after states and whether a repair was needed.
+ *
+ * @param {string|mongoose.Types.ObjectId} productId
+ * @returns {Promise<{ repaired: boolean, previous: { ratingAverage: number, ratingCount: number }, current: { ratingAverage: number, ratingCount: number } }>}
+ */
+export async function repairProductRating(productId) {
+  const consistency = await checkProductRatingConsistency(productId);
+
+  if (consistency.isConsistent) {
+    return {
+      repaired: false,
+      previous: consistency.stored,
+      current: consistency.stored
+    };
+  }
+
+  const updated = await recalculateProductRating(productId);
+
+  return {
+    repaired: true,
+    previous: consistency.stored,
+    current: {
+      ratingAverage: updated.ratingAverage,
+      ratingCount: updated.ratingCount
+    }
   };
 }

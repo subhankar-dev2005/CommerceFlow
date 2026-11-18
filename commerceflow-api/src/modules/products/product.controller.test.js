@@ -328,7 +328,10 @@ describe("product.controller - updateProduct specifications support", () => {
 
     expect(Product.findByIdAndUpdate).toHaveBeenCalledWith(
       "507f1f77bcf86cd799439011",
-      { specifications: req.body.specifications },
+      {
+        specifications: req.body.specifications,
+        changeToken: expect.stringMatching(/^[0-9a-fA-F]{24}$/)
+      },
       { new: true, runValidators: true }
     );
     expect(res.status).toHaveBeenCalledWith(200);
@@ -360,7 +363,10 @@ describe("product.controller - updateProduct specifications support", () => {
 
     expect(Product.findByIdAndUpdate).toHaveBeenCalledWith(
       "507f1f77bcf86cd799439011",
-      { specifications: [] },
+      {
+        specifications: [],
+        changeToken: expect.stringMatching(/^[0-9a-fA-F]{24}$/)
+      },
       { new: true, runValidators: true }
     );
     expect(res.status).toHaveBeenCalledWith(200);

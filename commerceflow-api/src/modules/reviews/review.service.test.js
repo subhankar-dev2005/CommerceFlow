@@ -3,7 +3,13 @@ import mongoose from "mongoose";
 import Order from "../orders/order.model.js";
 import Product from "../products/product.model.js";
 import Review from "./review.model.js";
-import { findQualifyingOrder, recalculateProductRating } from "./review.service.js";
+import {
+  findQualifyingOrder,
+  recalculateProductRating,
+  checkProductRatingConsistency,
+  repairProductRating,
+  clearActiveRecalculations
+} from "./review.service.js";
 
 describe("Review Service — Purchase Verification & Rating Aggregation", () => {
   const userId = "507f1f77bcf86cd799439011";
@@ -14,6 +20,7 @@ describe("Review Service — Purchase Verification & Rating Aggregation", () => 
 
   beforeEach(() => {
     vi.restoreAllMocks();
+    clearActiveRecalculations();
   });
 
   describe("findQualifyingOrder — Purchase Discovery", () => {
@@ -218,7 +225,8 @@ describe("Review Service — Purchase Verification & Rating Aggregation", () => 
         {
           $set: {
             ratingAverage: 0,
-            ratingCount: 0
+            ratingCount: 0,
+            changeToken: expect.stringMatching(/^[0-9a-fA-F]{24}$/)
           }
         },
         { new: true }
@@ -377,7 +385,8 @@ describe("Review Service — Purchase Verification & Rating Aggregation", () => 
         {
           $set: {
             ratingAverage: 0,
-            ratingCount: 0
+            ratingCount: 0,
+            changeToken: expect.stringMatching(/^[0-9a-fA-F]{24}$/)
           }
         },
         { new: true }
@@ -446,7 +455,8 @@ describe("Review Service — Purchase Verification & Rating Aggregation", () => 
         {
           $set: {
             ratingAverage: 4.5,
-            ratingCount: 2
+            ratingCount: 2,
+            changeToken: expect.stringMatching(/^[0-9a-fA-F]{24}$/)
           }
         },
         { new: true }
@@ -467,6 +477,152 @@ describe("Review Service — Purchase Verification & Rating Aggregation", () => 
       expect(matchStage.product).toEqual(new mongoose.Types.ObjectId(productId));
       expect(matchStage.product).not.toEqual(new mongoose.Types.ObjectId(otherProductId));
       expect(matchStage.status).toBe("published");
+    });
+  });
+
+  describe("Concurrency Coalescing & Rating Repair", () => {
+    it("coalesces concurrent recalculation requests and leaves Product in consistent state", async () => {
+      vi.spyOn(Product, "exists").mockResolvedValue({ _id: productId });
+
+      let aggregateCallCount = 0;
+      vi.spyOn(Review, "aggregate").mockImplementation(async () => {
+        aggregateCallCount++;
+        // Simulate async delay
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        return [
+          {
+            _id: new mongoose.Types.ObjectId(productId),
+            ratingCount: 3,
+            ratingAverage: 4.67
+          }
+        ];
+      });
+
+      const updateSpy = vi.spyOn(Product, "findByIdAndUpdate").mockResolvedValue({
+        _id: productId,
+        ratingAverage: 4.67,
+        ratingCount: 3
+      });
+
+      // Dispatch 3 concurrent recalculation promises for the same product
+      const [res1, res2, res3] = await Promise.all([
+        recalculateProductRating(productId),
+        recalculateProductRating(productId),
+        recalculateProductRating(productId)
+      ]);
+
+      expect(res1.ratingAverage).toBe(4.67);
+      expect(res1.ratingCount).toBe(3);
+      expect(res2.ratingAverage).toBe(4.67);
+      expect(res2.ratingCount).toBe(3);
+      expect(res3.ratingAverage).toBe(4.67);
+      expect(res3.ratingCount).toBe(3);
+
+      expect(updateSpy).toHaveBeenCalled();
+      // Verifies that redundant concurrent calls were coalesced safely
+      expect(aggregateCallCount).toBeLessThanOrEqual(2);
+    });
+
+    it("clears in-flight tracking after an error allowing clean subsequent retries", async () => {
+      vi.spyOn(Product, "exists").mockResolvedValue({ _id: productId });
+      vi.spyOn(Review, "aggregate")
+        .mockRejectedValueOnce(new Error("Transient MongoDB timeout"))
+        .mockResolvedValueOnce([
+          {
+            _id: new mongoose.Types.ObjectId(productId),
+            ratingCount: 2,
+            ratingAverage: 4.0
+          }
+        ]);
+
+      vi.spyOn(Product, "findByIdAndUpdate").mockResolvedValue({
+        _id: productId,
+        ratingAverage: 4.0,
+        ratingCount: 2
+      });
+
+      // First call fails
+      await expect(recalculateProductRating(productId)).rejects.toThrow("Transient MongoDB timeout");
+
+      // Immediate retry succeeds without deadlocks or stuck promises
+      const retryResult = await recalculateProductRating(productId);
+      expect(retryResult.ratingAverage).toBe(4.0);
+      expect(retryResult.ratingCount).toBe(2);
+    });
+
+    it("checkProductRatingConsistency identifies consistent and stale rating aggregates", async () => {
+      vi.spyOn(Product, "findById").mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          lean: vi.fn().mockResolvedValue({
+            _id: productId,
+            ratingAverage: 3.5,
+            ratingCount: 2
+          })
+        })
+      });
+
+      // When reviews match: count 2, avg 3.5
+      vi.spyOn(Review, "aggregate").mockResolvedValueOnce([
+        { _id: new mongoose.Types.ObjectId(productId), ratingCount: 2, ratingAverage: 3.5 }
+      ]);
+
+      const consistentReport = await checkProductRatingConsistency(productId);
+      expect(consistentReport.isConsistent).toBe(true);
+      expect(consistentReport.stored).toEqual({ ratingAverage: 3.5, ratingCount: 2 });
+      expect(consistentReport.actual).toEqual({ ratingAverage: 3.5, ratingCount: 2 });
+
+      // When reviews differ: count 3, avg 4.0 (stale)
+      vi.spyOn(Review, "aggregate").mockResolvedValueOnce([
+        { _id: new mongoose.Types.ObjectId(productId), ratingCount: 3, ratingAverage: 4.0 }
+      ]);
+
+      const staleReport = await checkProductRatingConsistency(productId);
+      expect(staleReport.isConsistent).toBe(false);
+      expect(staleReport.stored).toEqual({ ratingAverage: 3.5, ratingCount: 2 });
+      expect(staleReport.actual).toEqual({ ratingAverage: 4.0, ratingCount: 3 });
+    });
+
+    it("repairProductRating repairs stale rating metrics and skips when already consistent", async () => {
+      // Setup Product with stale values (stored: 3.0 / 1, actual: 4.5 / 2)
+      vi.spyOn(Product, "exists").mockResolvedValue({ _id: productId });
+      vi.spyOn(Product, "findById").mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          lean: vi.fn().mockResolvedValue({
+            _id: productId,
+            ratingAverage: 3.0,
+            ratingCount: 1
+          })
+        })
+      });
+
+      vi.spyOn(Review, "aggregate").mockResolvedValue([
+        { _id: new mongoose.Types.ObjectId(productId), ratingCount: 2, ratingAverage: 4.5 }
+      ]);
+
+      vi.spyOn(Product, "findByIdAndUpdate").mockResolvedValue({
+        _id: productId,
+        ratingAverage: 4.5,
+        ratingCount: 2
+      });
+
+      const repairReport = await repairProductRating(productId);
+      expect(repairReport.repaired).toBe(true);
+      expect(repairReport.previous).toEqual({ ratingAverage: 3.0, ratingCount: 1 });
+      expect(repairReport.current).toEqual({ ratingAverage: 4.5, ratingCount: 2 });
+
+      // Second check: Product now has 4.5 / 2, matching aggregate
+      vi.spyOn(Product, "findById").mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          lean: vi.fn().mockResolvedValue({
+            _id: productId,
+            ratingAverage: 4.5,
+            ratingCount: 2
+          })
+        })
+      });
+
+      const noopReport = await repairProductRating(productId);
+      expect(noopReport.repaired).toBe(false);
     });
   });
 });

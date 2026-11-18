@@ -77,7 +77,7 @@ export function createApp({ corsOrigin = env.CORS_ORIGIN } = {}) {
   const allowedOrigins = Array.isArray(corsOrigin)
     ? corsOrigin
     : typeof corsOrigin === "string"
-      ? [corsOrigin]
+      ? corsOrigin.split(",").map((origin) => origin.trim()).filter(Boolean)
       : corsOrigin;
 
   app.use(
@@ -124,7 +124,15 @@ export function createApp({ corsOrigin = env.CORS_ORIGIN } = {}) {
           (req.method === "GET" && (
             path === "/api/v1/products" ||
             path === "/api/v1/products/categories" ||
-            (path.startsWith("/api/v1/products/") && !path.includes("/reviews"))
+            path === "/api/v1/banners" ||
+            path === "/api/v1/banners/active" ||
+            path.startsWith("/api/v1/banners/images/") ||
+            (path.startsWith("/api/v1/products/") && !path.includes("/reviews")) ||
+            path === "/api/v1/settings/logo" ||
+            path.startsWith("/api/v1/settings/logo") ||
+            path === "/api/v1/settings/branding" ||
+            path === "/api/v1/settings/announcement" ||
+            path === "/api/v1/settings/payment-methods"
           ))
         );
       }

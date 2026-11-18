@@ -20,6 +20,9 @@ import adminRefundRoutes from "../modules/refunds/admin-refund.routes.js";
 import adminCategoryRoutes from "../modules/products/admin-category.routes.js";
 import adminBrandRoutes from "../modules/brands/admin-brand.routes.js";
 import adminSettingsRoutes from "../modules/settings/admin-settings.routes.js";
+import adminBannerRoutes from "../modules/banners/admin-banner.routes.js";
+import adminReviewRoutes from "../modules/reviews/admin-review.routes.js";
+import adminCampaignRoutes from "../modules/campaigns/admin-campaign.routes.js";
 
 const router = Router();
 
@@ -71,5 +74,8 @@ router.use("/refunds", adminRefundRoutes);
 router.use("/categories", adminCategoryRoutes);
 router.use("/brands", adminBrandRoutes);
 router.use("/settings", adminSettingsRoutes);
+router.use("/banners", adminBannerRoutes);
+router.use("/reviews", adminReviewRoutes);
+router.use("/campaigns", adminCampaignRoutes);
 
 export default router;
