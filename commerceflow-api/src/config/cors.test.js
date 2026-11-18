@@ -256,5 +256,23 @@ describe("CORS Configuration & Environment Validation", () => {
       expect(response.body.success).toBe(true);
       expect(response.headers["access-control-allow-origin"]).toBeUndefined();
     });
+
+    it("handles CORS preflight OPTIONS request for /api/v1/users/admin/login from http://localhost:5174 with credentials", async () => {
+      const app = createApp({
+        corsOrigin: "http://localhost:3000,http://localhost:5173,http://localhost:5174"
+      });
+
+      const preflight = await request(app)
+        .options("/api/v1/users/admin/login")
+        .set("Origin", "http://localhost:5174")
+        .set("Access-Control-Request-Method", "POST")
+        .set("Access-Control-Request-Headers", "content-type,x-commerceflow-client");
+
+      expect(preflight.status).toBe(204);
+      expect(preflight.headers["access-control-allow-origin"]).toBe("http://localhost:5174");
+      expect(preflight.headers["access-control-allow-credentials"]).toBe("true");
+      expect(preflight.headers["access-control-allow-methods"]).toContain("POST");
+      expect(preflight.headers["access-control-allow-headers"]).toContain("x-commerceflow-client");
+    });
   });
 });

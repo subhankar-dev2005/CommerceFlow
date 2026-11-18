@@ -9,6 +9,7 @@ import registerUserSchema from "./user.validator.js";
 
 import loginUser from "./login-user.controller.js";
 import adminLoginUser from "./admin-login-user.controller.js";
+import adminMfaRoutes from "./admin-mfa.routes.js";
 import loginUserSchema from "./login-user.validator.js";
 import logoutUser from "./logout-user.controller.js";
 import logoutAllUser from "./logout-all.controller.js";
@@ -41,7 +42,8 @@ import {
 import {
   authRateLimitMiddleware,
   registerRateLimitMiddleware,
-  refreshRateLimitMiddleware
+  refreshRateLimitMiddleware,
+  adminLoginRateLimitMiddleware
 } from "../../common/middleware/auth-rate-limit.middleware.js";
 const router = Router();
 
@@ -61,10 +63,12 @@ router.post(
 
 router.post(
   "/admin/login",
-  authRateLimitMiddleware,
+  adminLoginRateLimitMiddleware,
   validate(loginUserSchema),
   adminLoginUser
 );
+
+router.use("/admin/mfa", adminMfaRoutes);
 
 router.post(
   "/logout",

@@ -23,6 +23,8 @@ function createMockElement(tag, doc) {
   const children = [];
   const attributes = {};
   const listeners = {};
+  let elValue = '';
+  let elChecked = false;
 
   Object.assign(el, {
     nodeType: 1,
@@ -34,14 +36,19 @@ function createMockElement(tag, doc) {
     focus: () => {},
     setAttribute: (name, val) => {
       attributes[name] = String(val);
+      if (name === 'value') elValue = String(val);
+      if (name === 'checked') elChecked = true;
     },
     getAttribute: (name) => {
+      if (name === 'value') return elValue;
       if (name in attributes) return attributes[name];
+      if (typeof el[name] === 'string') return el[name];
       return null;
     },
     hasAttribute: (name) => name in attributes,
     removeAttribute: (name) => {
       delete attributes[name];
+      if (name === 'checked') elChecked = false;
     },
     addEventListener: (type, handler) => {
       if (!listeners[type]) listeners[type] = [];
@@ -51,6 +58,18 @@ function createMockElement(tag, doc) {
       if (listeners[type]) {
         listeners[type] = listeners[type].filter((h) => h !== handler);
       }
+    },
+    dispatchEvent: (event) => {
+      if (!event.target) event.target = el;
+      event.currentTarget = el;
+      const type = event?.type;
+      if (listeners[type]) {
+        listeners[type].slice().forEach((handler) => handler(event));
+      }
+      if (event.bubbles !== false && el.parentNode && el.parentNode.dispatchEvent) {
+        el.parentNode.dispatchEvent(event);
+      }
+      return true;
     },
     appendChild: (c) => {
       c.parentNode = el;
@@ -71,6 +90,23 @@ function createMockElement(tag, doc) {
         children.push(c);
       }
       return c;
+    },
+  });
+
+  Object.defineProperty(el, 'value', {
+    get: () => elValue,
+    set: (v) => {
+      elValue = String(v ?? '');
+      attributes['value'] = elValue;
+    },
+  });
+
+  Object.defineProperty(el, 'checked', {
+    get: () => elChecked,
+    set: (v) => {
+      elChecked = Boolean(v);
+      if (v) attributes['checked'] = '';
+      else delete attributes['checked'];
     },
   });
 
@@ -130,6 +166,7 @@ function createMockDocument() {
 
 const mockDoc = createMockDocument();
 let navigatedUrl = null;
+const winListeners = {};
 
 const mockWin = {
   document: mockDoc,
@@ -146,9 +183,22 @@ const mockWin = {
   },
   innerWidth: 1200,
   scrollTo: () => {},
-  addEventListener: () => {},
-  removeEventListener: () => {},
-  dispatchEvent: () => true,
+  addEventListener: (type, handler) => {
+    if (!winListeners[type]) winListeners[type] = [];
+    winListeners[type].push(handler);
+  },
+  removeEventListener: (type, handler) => {
+    if (winListeners[type]) {
+      winListeners[type] = winListeners[type].filter((h) => h !== handler);
+    }
+  },
+  dispatchEvent: (event) => {
+    const type = event?.type;
+    if (winListeners[type]) {
+      winListeners[type].slice().forEach((handler) => handler(event));
+    }
+    return true;
+  },
   Event: class MockEvent {
     constructor(type) {
       this.type = type;
@@ -204,11 +254,150 @@ async function renderComponent(element) {
   };
 }
 
+// Helper utilities to find and interact with mock DOM elements
+function findElement(root, predicate) {
+  if (predicate(root)) return root;
+  for (const child of (root.childNodes || [])) {
+    if (child.nodeType === 1) {
+      const found = findElement(child, predicate);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+function findElements(root, predicate) {
+  const list = [];
+  if (predicate(root)) list.push(root);
+  for (const child of (root.childNodes || [])) {
+    if (child.nodeType === 1) {
+      list.push(...findElements(child, predicate));
+    }
+  }
+  return list;
+}
+
+async function fillInput(root, nameOrId, value) {
+  const inputEl = findElement(
+    root,
+    (el) =>
+      el.tagName === 'INPUT' &&
+      (el.name === nameOrId ||
+        el.id === nameOrId ||
+        el.getAttribute?.('name') === nameOrId ||
+        el.getAttribute?.('id') === nameOrId)
+  );
+  if (!inputEl) {
+    throw new Error(`Input not found: ${nameOrId}`);
+  }
+  inputEl.value = value;
+  const propsKey = Object.keys(inputEl).find((k) => k.startsWith('__reactProps$'));
+  const props = propsKey ? inputEl[propsKey] : null;
+  if (props?.onChange) {
+    await act(async () => {
+      props.onChange({
+        target: { name: inputEl.name || nameOrId, value },
+        currentTarget: inputEl,
+        preventDefault: () => {},
+        stopPropagation: () => {},
+      });
+    });
+  } else {
+    await act(async () => {
+      inputEl.dispatchEvent({ type: 'change', bubbles: true });
+    });
+  }
+  return inputEl;
+}
+
+async function submitForm(root, formIndex = 0) {
+  const forms = findElements(root, (el) => el.tagName === 'FORM');
+  const formEl = forms[formIndex];
+  if (!formEl) {
+    throw new Error(`Form not found at index ${formIndex}`);
+  }
+  const propsKey = Object.keys(formEl).find((k) => k.startsWith('__reactProps$'));
+  const props = propsKey ? formEl[propsKey] : null;
+  if (props?.onSubmit) {
+    await act(async () => {
+      await props.onSubmit({
+        preventDefault: () => {},
+        stopPropagation: () => {},
+        target: formEl,
+        currentTarget: formEl,
+      });
+    });
+  } else {
+    await act(async () => {
+      formEl.dispatchEvent({ type: 'submit', bubbles: true, cancelable: true });
+    });
+  }
+}
+
+async function clickButton(root, textMatch) {
+  const btn = findElement(
+    root,
+    (el) => (el.tagName === 'BUTTON' || el.tagName === 'A') && (el.textContent || '').includes(textMatch)
+  );
+  if (!btn) {
+    throw new Error(`Button matching "${textMatch}" not found`);
+  }
+  const propsKey = Object.keys(btn).find((k) => k.startsWith('__reactProps$'));
+  const props = propsKey ? btn[propsKey] : null;
+  if (props?.onClick) {
+    await act(async () => {
+      await props.onClick({
+        preventDefault: () => {},
+        stopPropagation: () => {},
+        target: btn,
+        currentTarget: btn,
+      });
+    });
+  } else {
+    await act(async () => {
+      btn.dispatchEvent({ type: 'click', bubbles: true, cancelable: true });
+    });
+  }
+  return btn;
+}
+
+async function toggleCheckbox(root, id) {
+  const checkbox = findElement(
+    root,
+    (el) =>
+      el.tagName === 'INPUT' &&
+      (el.id === id || el.name === id || el.getAttribute?.('id') === id)
+  );
+  if (!checkbox) throw new Error(`Checkbox not found: ${id}`);
+  const newChecked = !checkbox.checked;
+  checkbox.checked = newChecked;
+  const propsKey = Object.keys(checkbox).find((k) => k.startsWith('__reactProps$'));
+  const props = propsKey ? checkbox[propsKey] : null;
+  if (props?.onChange) {
+    await act(async () => {
+      await props.onChange({
+        target: { id, checked: newChecked },
+        currentTarget: checkbox,
+        preventDefault: () => {},
+        stopPropagation: () => {},
+      });
+    });
+  } else {
+    await act(async () => {
+      checkbox.dispatchEvent({ type: 'change', bubbles: true });
+    });
+  }
+  return checkbox;
+}
+
 describe('Admin Authentication & AdminLoginPage Frontend Tests', () => {
   beforeEach(() => {
     navigatedUrl = null;
     mockWin.location.pathname = '/admin/login';
     mockWin.location.search = '';
+    for (const k of Object.keys(winListeners)) {
+      delete winListeners[k];
+    }
   });
 
   describe('1. Open-Redirect Vulnerability Prevention (getSafeAdminRedirect)', () => {
@@ -320,6 +509,29 @@ describe('Admin Authentication & AdminLoginPage Frontend Tests', () => {
       await unmount();
     });
 
+    it('4b. automatically navigates authenticated super_admin to dashboard', async () => {
+      const mockSuperAdminAuth = {
+        user: { id: 'super-1', email: 'super@example.com', role: 'super_admin' },
+        isAuthenticated: true,
+        isLoading: false,
+        loginAdmin: async () => {},
+        error: null,
+        clearError: () => {},
+      };
+
+      const { unmount } = await renderComponent(
+        React.createElement(
+          AuthContext.Provider,
+          { value: mockSuperAdminAuth },
+          React.createElement(AdminLoginPage, null)
+        )
+      );
+
+      assert.equal(navigatedUrl, '/admin/dashboard', 'Must automatically redirect super_admin to dashboard');
+
+      await unmount();
+    });
+
     it('5. handles invalid credentials with error alert and no automatic retry', async () => {
       let callCount = 0;
       const mockAuth = {
@@ -343,11 +555,6 @@ describe('Admin Authentication & AdminLoginPage Frontend Tests', () => {
           React.createElement(AdminLoginPage, null)
         )
       );
-
-      // Find form element
-      const form = container.querySelector
-        ? container.querySelector('form')
-        : container.children?.find?.((c) => c.tagName === 'FORM' || c.children?.some?.((sub) => sub.tagName === 'FORM'));
 
       assert.ok(container.textContent.includes('Sign In to Admin Console'));
       assert.equal(callCount, 0, 'Must not submit on render');
@@ -384,6 +591,41 @@ describe('Admin Authentication & AdminLoginPage Frontend Tests', () => {
       );
 
       assert.equal(totalCalls, 0, 'No calls dispatched prior to user submission');
+      await unmount();
+    });
+
+    it('6b. unenrolled admin password login succeeds without MFA and navigates directly to dashboard', async () => {
+      let completeCalled = 0;
+      const mockAuth = {
+        user: null,
+        isAuthenticated: false,
+        isLoading: false,
+        loginAdmin: async () => ({
+          mfaRequired: false,
+          mfaEnrollmentRequired: false,
+          user: { id: 'admin-1', email: 'admin@example.com', role: 'admin' },
+        }),
+        completeAdminMfaSession: () => { completeCalled++; },
+        error: null,
+        clearError: () => {},
+      };
+
+      const { container, unmount } = await renderComponent(
+        React.createElement(
+          AuthContext.Provider,
+          { value: mockAuth },
+          React.createElement(AdminLoginPage, null)
+        )
+      );
+
+      await fillInput(container, 'email', 'admin@example.com');
+      await fillInput(container, 'password', 'Password123!');
+      await submitForm(container);
+
+      assert.strictEqual(navigatedUrl, '/admin/dashboard', 'Must navigate unenrolled admin directly to dashboard');
+      assert.ok(!container.textContent.includes('Two-Step Verification'), 'Must not require 2-step verification');
+      assert.ok(!container.textContent.includes('Set Up Two-Step Verification'), 'Must not require MFA setup');
+
       await unmount();
     });
   });
@@ -444,13 +686,532 @@ describe('Admin Authentication & AdminLoginPage Frontend Tests', () => {
       await unmount();
     });
 
+    it('8b. authenticated super_admin on AdminRoute renders protected admin console', async () => {
+      mockWin.location.pathname = '/admin';
+
+      const superAdminContext = {
+        user: { id: 'super-1', role: 'super_admin' },
+        isAuthenticated: true,
+        isLoading: false,
+      };
+
+      const { container, unmount } = await renderComponent(
+        React.createElement(
+          AuthContext.Provider,
+          { value: superAdminContext },
+          React.createElement(AdminRoute, null, React.createElement('div', null, 'Admin Panel'))
+        )
+      );
+
+      const text = container.textContent;
+      assert.ok(!text.includes('Access Denied'), 'Must not display Access Denied for super_admin');
+      assert.ok(text.includes('Admin Panel'), 'Must render children for super_admin role');
+
+      await unmount();
+    });
+
     it('9. localStorage and sessionStorage are never invoked for token persistence', () => {
-      // If any part of the auth flow attempts to store tokens in localStorage,
-      // mockWin.localStorage.setItem will throw.
       assert.doesNotThrow(() => {
         const dummySession = { user: { role: 'admin' } };
         assert.ok(dummySession.user.role === 'admin');
       });
+    });
+
+    it('10. disallows /admin/register, verifying no admin registration route exists and directing to /admin/login', async () => {
+      mockWin.location.pathname = '/admin/register';
+      mockWin.location.search = '';
+
+      const unauthContext = {
+        user: null,
+        isAuthenticated: false,
+        isLoading: false,
+      };
+
+      const { container, unmount } = await renderComponent(
+        React.createElement(
+          AuthContext.Provider,
+          { value: unauthContext },
+          React.createElement(AdminLoginPage, null)
+        )
+      );
+
+      const text = container.textContent;
+      assert.ok(
+        text.includes('Sign In to Admin Console') || text.includes('Administrator Sign In'),
+        'Must render administrator sign in'
+      );
+      assert.ok(!text.includes('Register Admin') && !text.includes('Create Admin Account'));
+      assert.ok(!text.includes('Admin Page Not Found'), 'Must not render Admin Page Not Found');
+
+      await unmount();
+    });
+  });
+
+  describe('11-22. Admin Password-Only Login & MFA Retirement Verification', () => {
+    it('1. valid password login authenticates admin directly and navigates to dashboard without MFA challenge', async () => {
+      const mockAuth = {
+        user: null,
+        isAuthenticated: false,
+        isLoading: false,
+        loginAdmin: async () => ({
+          success: true,
+          mfaRequired: false,
+          mfaEnrollmentRequired: false,
+          user: { id: 'admin-direct', email: 'admin@example.com', role: 'admin' },
+        }),
+        error: null,
+        clearError: () => {},
+      };
+
+      const { container, unmount } = await renderComponent(
+        React.createElement(
+          AuthContext.Provider,
+          { value: mockAuth },
+          React.createElement(AdminLoginPage, null)
+        )
+      );
+
+      await fillInput(container, 'email', 'admin@example.com');
+      await fillInput(container, 'password', 'Password123!');
+      await submitForm(container);
+
+      assert.strictEqual(navigatedUrl, '/admin/dashboard', 'Must navigate directly to dashboard');
+      assert.ok(!container.textContent.includes('Two-Step Verification'), 'Must not display Two-Step Verification');
+      assert.ok(!container.textContent.includes('Authenticator Code'), 'Must not display Authenticator Code');
+      assert.ok(!container.textContent.includes('Set Up Two-Step Verification'), 'Must not display MFA setup');
+
+      await unmount();
+    });
+
+    it('2. login form renders only email, password, and sign in button without MFA controls', async () => {
+      const unauthContext = {
+        user: null,
+        isAuthenticated: false,
+        isLoading: false,
+      };
+
+      const { container, unmount } = await renderComponent(
+        React.createElement(
+          AuthContext.Provider,
+          { value: unauthContext },
+          React.createElement(AdminLoginPage, null)
+        )
+      );
+
+      const emailInput = findElement(container, (el) => el.tagName === 'INPUT' && el.name === 'email');
+      const passwordInput = findElement(container, (el) => el.tagName === 'INPUT' && el.name === 'password');
+      const totpInput = findElement(container, (el) => el.tagName === 'INPUT' && el.name === 'totpCode');
+      const recoveryInput = findElement(container, (el) => el.tagName === 'INPUT' && el.name === 'recoveryCode');
+      const setupInput = findElement(container, (el) => el.tagName === 'INPUT' && el.name === 'setupTotpCode');
+
+      assert.ok(emailInput, 'Email input must exist');
+      assert.ok(passwordInput, 'Password input must exist');
+      assert.strictEqual(totpInput, null, 'TOTP code input must NOT exist in DOM');
+      assert.strictEqual(recoveryInput, null, 'Recovery code input must NOT exist in DOM');
+      assert.strictEqual(setupInput, null, 'Setup code input must NOT exist in DOM');
+
+      await unmount();
+    });
+
+    it('3. handles deactivated administrator account without triggering MFA setup or challenge', async () => {
+      const mockAuth = {
+        user: null,
+        isAuthenticated: false,
+        isLoading: false,
+        loginAdmin: async () => {
+          const err = new Error('This administrator account has been deactivated.');
+          err.code = 'ACCOUNT_DEACTIVATED';
+          throw err;
+        },
+        error: null,
+        clearError: () => {},
+      };
+
+      const { container, unmount } = await renderComponent(
+        React.createElement(
+          AuthContext.Provider,
+          { value: mockAuth },
+          React.createElement(AdminLoginPage, null)
+        )
+      );
+
+      await fillInput(container, 'email', 'deactivated@example.com');
+      await fillInput(container, 'password', 'Password123!');
+      await submitForm(container);
+
+      assert.ok(container.textContent.includes('This administrator account has been deactivated.'));
+      assert.strictEqual(navigatedUrl, null, 'Must not navigate on deactivated account');
+      assert.ok(!container.textContent.includes('Two-Step Verification'));
+
+      await unmount();
+    });
+
+    it('4. handles rate limit exceeded with clean error alert', async () => {
+      const mockAuth = {
+        user: null,
+        isAuthenticated: false,
+        isLoading: false,
+        loginAdmin: async () => {
+          const err = new Error('Too many attempts');
+          err.code = 'AUTH_RATE_LIMIT_EXCEEDED';
+          throw err;
+        },
+        error: null,
+        clearError: () => {},
+      };
+
+      const { container, unmount } = await renderComponent(
+        React.createElement(
+          AuthContext.Provider,
+          { value: mockAuth },
+          React.createElement(AdminLoginPage, null)
+        )
+      );
+
+      await fillInput(container, 'email', 'admin@example.com');
+      await fillInput(container, 'password', 'Password123!');
+      await submitForm(container);
+
+      assert.ok(container.textContent.includes('Too many authentication attempts. Please try again later.'));
+      assert.strictEqual(navigatedUrl, null);
+
+      await unmount();
+    });
+
+    it('5. handles invalid administrator credentials with clear error alert', async () => {
+      let loginCalled = false;
+      const mockAuth = {
+        user: null,
+        isAuthenticated: false,
+        isLoading: false,
+        loginAdmin: async () => {
+          loginCalled = true;
+          const err = new Error('Invalid credentials');
+          err.code = 'INVALID_CREDENTIALS';
+          throw err;
+        },
+        error: null,
+        clearError: () => {},
+      };
+
+      const { container, unmount } = await renderComponent(
+        React.createElement(
+          AuthContext.Provider,
+          { value: mockAuth },
+          React.createElement(AdminLoginPage, null)
+        )
+      );
+
+      await fillInput(container, 'email', 'admin@example.com');
+      await fillInput(container, 'password', 'WrongPassword123!');
+      await submitForm(container);
+
+      assert.strictEqual(loginCalled, true);
+      assert.ok(container.textContent.includes('Invalid administrator email or password.'));
+      assert.strictEqual(navigatedUrl, null);
+
+      await unmount();
+    });
+
+    it('6. validates email format and presence before submitting without calling backend', async () => {
+      let loginCalls = 0;
+      const mockAuth = {
+        user: null,
+        isAuthenticated: false,
+        isLoading: false,
+        loginAdmin: async () => {
+          loginCalls++;
+          return {};
+        },
+        error: null,
+        clearError: () => {},
+      };
+
+      const { container, unmount } = await renderComponent(
+        React.createElement(
+          AuthContext.Provider,
+          { value: mockAuth },
+          React.createElement(AdminLoginPage, null)
+        )
+      );
+
+      // 1. Empty email
+      await fillInput(container, 'email', '   ');
+      await fillInput(container, 'password', 'ValidPassword123!');
+      await submitForm(container);
+      assert.strictEqual(loginCalls, 0);
+      assert.ok(container.textContent.includes('Administrator email address is required.'));
+
+      // 2. Malformed email
+      await fillInput(container, 'email', 'not-an-email');
+      await submitForm(container);
+      assert.strictEqual(loginCalls, 0);
+      assert.ok(container.textContent.includes('Please enter a valid email address.'));
+
+      await unmount();
+    });
+
+    it('7. validates password presence before submitting without calling backend', async () => {
+      let loginCalls = 0;
+      const mockAuth = {
+        user: null,
+        isAuthenticated: false,
+        isLoading: false,
+        loginAdmin: async () => {
+          loginCalls++;
+          return {};
+        },
+        error: null,
+        clearError: () => {},
+      };
+
+      const { container, unmount } = await renderComponent(
+        React.createElement(
+          AuthContext.Provider,
+          { value: mockAuth },
+          React.createElement(AdminLoginPage, null)
+        )
+      );
+
+      await fillInput(container, 'email', 'admin@example.com');
+      await fillInput(container, 'password', '');
+      await submitForm(container);
+
+      assert.strictEqual(loginCalls, 0);
+      assert.ok(container.textContent.includes('Password is required.'));
+
+      await unmount();
+    });
+
+    it('8. preserves safe admin redirect destination after successful password authentication', async () => {
+      mockWin.location.search = '?redirect=%2Fadmin%2Fproducts';
+      const mockAuth = {
+        user: null,
+        isAuthenticated: false,
+        isLoading: false,
+        loginAdmin: async () => ({
+          success: true,
+          user: { id: 'adm-redirect', role: 'admin' },
+        }),
+        error: null,
+        clearError: () => {},
+      };
+
+      const { container, unmount } = await renderComponent(
+        React.createElement(
+          AuthContext.Provider,
+          { value: mockAuth },
+          React.createElement(AdminLoginPage, null)
+        )
+      );
+
+      await fillInput(container, 'email', 'admin@example.com');
+      await fillInput(container, 'password', 'Password123!');
+      await submitForm(container);
+
+      assert.strictEqual(navigatedUrl, '/admin/products', 'Must redirect to safe target specified in URL query');
+
+      await unmount();
+    });
+
+    it('9. sanitizes open-redirect attempts in query parameter, defaulting to dashboard', async () => {
+      mockWin.location.search = '?redirect=https%3A%2F%2Fmalicious.attacker.com';
+      const mockAuth = {
+        user: null,
+        isAuthenticated: false,
+        isLoading: false,
+        loginAdmin: async () => ({
+          success: true,
+          user: { id: 'adm-safe', role: 'admin' },
+        }),
+        error: null,
+        clearError: () => {},
+      };
+
+      const { container, unmount } = await renderComponent(
+        React.createElement(
+          AuthContext.Provider,
+          { value: mockAuth },
+          React.createElement(AdminLoginPage, null)
+        )
+      );
+
+      await fillInput(container, 'email', 'admin@example.com');
+      await fillInput(container, 'password', 'Password123!');
+      await submitForm(container);
+
+      assert.strictEqual(navigatedUrl, '/admin/dashboard', 'Open redirect target must be sanitized to default dashboard');
+
+      await unmount();
+    });
+
+    it('10. renders warning banner when authenticated customer accesses admin login', async () => {
+      const customerAuth = {
+        user: { id: 'cust-1', email: 'customer@example.com', role: 'customer' },
+        isAuthenticated: true,
+        isLoading: false,
+        loginAdmin: async () => {},
+      };
+
+      const { container, unmount } = await renderComponent(
+        React.createElement(
+          AuthContext.Provider,
+          { value: customerAuth },
+          React.createElement(AdminLoginPage, null)
+        )
+      );
+
+      assert.ok(container.textContent.includes('Signed in as Customer'));
+      assert.ok(container.textContent.includes('customer@example.com'));
+
+      await unmount();
+    });
+
+    it('11. renders storefront return link pointing to root /', async () => {
+      const mockAuth = {
+        user: null,
+        isAuthenticated: false,
+        isLoading: false,
+      };
+
+      const { container, unmount } = await renderComponent(
+        React.createElement(
+          AuthContext.Provider,
+          { value: mockAuth },
+          React.createElement(AdminLoginPage, null)
+        )
+      );
+
+      const link = findElement(container, (el) => el.tagName === 'A' && (el.textContent || '').includes('Return to Storefront'));
+      assert.ok(link, 'Storefront return link must exist');
+      assert.strictEqual(link.getAttribute('href'), '/');
+
+      await unmount();
+    });
+
+    it('12. never registers beforeunload warning listeners during password-only lifecycle', async () => {
+      const mockAuth = {
+        user: null,
+        isAuthenticated: false,
+        isLoading: false,
+        loginAdmin: async () => ({
+          success: true,
+          user: { id: 'adm-direct', role: 'admin' },
+        }),
+      };
+
+      const { container, unmount } = await renderComponent(
+        React.createElement(
+          AuthContext.Provider,
+          { value: mockAuth },
+          React.createElement(AdminLoginPage, null)
+        )
+      );
+
+      assert.strictEqual(winListeners['beforeunload']?.length || 0, 0);
+
+      await fillInput(container, 'email', 'admin@example.com');
+      await fillInput(container, 'password', 'Password123!');
+      await submitForm(container);
+
+      assert.strictEqual(winListeners['beforeunload']?.length || 0, 0, 'Must NOT register beforeunload listeners during password login');
+
+      await unmount();
+      assert.strictEqual(winListeners['beforeunload']?.length || 0, 0);
+    });
+
+    it('13. handles backend validation error details and displays field errors', async () => {
+      const mockAuth = {
+        user: null,
+        isAuthenticated: false,
+        isLoading: false,
+        loginAdmin: async () => {
+          const err = new Error('Validation failed');
+          err.code = 'VALIDATION_ERROR';
+          err.details = [{ field: 'email', message: 'Administrative domain is not authorized.' }];
+          throw err;
+        },
+      };
+
+      const { container, unmount } = await renderComponent(
+        React.createElement(
+          AuthContext.Provider,
+          { value: mockAuth },
+          React.createElement(AdminLoginPage, null)
+        )
+      );
+
+      await fillInput(container, 'email', 'admin@unauthorized.com');
+      await fillInput(container, 'password', 'Password123!');
+      await submitForm(container);
+
+      assert.ok(container.textContent.includes('Administrative domain is not authorized.'));
+      assert.strictEqual(navigatedUrl, null);
+
+      await unmount();
+    });
+
+    it('14. handles network connection failure gracefully', async () => {
+      const mockAuth = {
+        user: null,
+        isAuthenticated: false,
+        isLoading: false,
+        loginAdmin: async () => {
+          const err = new Error('Network error');
+          err.code = 'NETWORK_ERROR';
+          throw err;
+        },
+      };
+
+      const { container, unmount } = await renderComponent(
+        React.createElement(
+          AuthContext.Provider,
+          { value: mockAuth },
+          React.createElement(AdminLoginPage, null)
+        )
+      );
+
+      await fillInput(container, 'email', 'admin@example.com');
+      await fillInput(container, 'password', 'Password123!');
+      await submitForm(container);
+
+      assert.ok(container.textContent.includes('Unable to connect to CommerceFlow API server'));
+      assert.strictEqual(navigatedUrl, null);
+
+      await unmount();
+    });
+
+    it('15. clears server error alert when administrator modifies credentials', async () => {
+      const mockAuth = {
+        user: null,
+        isAuthenticated: false,
+        isLoading: false,
+        loginAdmin: async () => {
+          const err = new Error('Invalid credentials');
+          err.code = 'INVALID_CREDENTIALS';
+          throw err;
+        },
+      };
+
+      const { container, unmount } = await renderComponent(
+        React.createElement(
+          AuthContext.Provider,
+          { value: mockAuth },
+          React.createElement(AdminLoginPage, null)
+        )
+      );
+
+      await fillInput(container, 'email', 'admin@example.com');
+      await fillInput(container, 'password', 'WrongPassword123!');
+      await submitForm(container);
+
+      assert.ok(container.textContent.includes('Invalid administrator email or password.'));
+
+      // Typing into email or password should clear the server error
+      await fillInput(container, 'password', 'NewAttempt123!');
+      assert.ok(!container.textContent.includes('Invalid administrator email or password.'), 'Server error alert should clear on input change');
+
+      await unmount();
     });
   });
 });

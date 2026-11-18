@@ -222,6 +222,51 @@ describe("Branding & Logo Endpoints Integration & Security Tests", () => {
       expect(res.headers["x-content-type-options"]).toBe("nosniff");
     });
 
+    it("serves custom logo asset with 200, Content-Type, and CORP cross-origin when file exists", async () => {
+      const realPath = logoStorage.getLogoFilePathSafe("logo-1793102665478-a5fc821e10fe37be.png");
+      if (realPath) {
+        vi.spyOn(StoreSettings, "findOne").mockReturnValue({
+          lean: vi.fn().mockResolvedValue({
+            singletonKey: STORE_SETTINGS_SINGLETON_KEY,
+            logoStorageKey: "logo-1793102665478-a5fc821e10fe37be.png",
+            logoMimeType: "image/png"
+          })
+        });
+
+        const res = await request(app)
+          .get("/api/v1/settings/logo?v=1793102665483")
+          .set("Origin", "http://localhost:5174");
+
+        expect(res.status).toBe(200);
+        expect(res.headers["content-type"]).toContain("image/png");
+        expect(res.headers["cross-origin-resource-policy"]).toBe("cross-origin");
+        expect(res.headers["cache-control"]).toContain("public");
+      }
+    });
+
+    it("excludes logo and branding requests from consuming general API rate limit quota", async () => {
+      vi.spyOn(StoreSettings, "findOne").mockReturnValue({
+        lean: vi.fn().mockResolvedValue({
+          singletonKey: STORE_SETTINGS_SINGLETON_KEY,
+          storeName: "CommerceFlow",
+          logoUrl: null
+        })
+      });
+
+      // Fetch branding and logo multiple times
+      for (let i = 0; i < 5; i += 1) {
+        await request(app).get("/api/v1/settings/branding");
+        await request(app).get("/api/v1/settings/logo");
+      }
+
+      // Check a sensitive endpoint governed by the global 100/15min limiter
+      const profileRes = await request(app).get("/api/v1/users/profile");
+      expect(profileRes.headers["ratelimit"]).toBeDefined();
+      expect(profileRes.headers["ratelimit"]).toContain("limit=100");
+      // Quota remaining must only reflect the 1 profile request (99 remaining), not 89
+      expect(profileRes.headers["ratelimit"]).toContain("remaining=99");
+    });
+
     it("preserves Cross-Origin-Resource-Policy: same-origin on branding metadata and other routes", async () => {
       vi.spyOn(StoreSettings, "findOne").mockReturnValue({
         lean: vi.fn().mockResolvedValue({

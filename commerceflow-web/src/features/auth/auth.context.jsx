@@ -42,6 +42,7 @@ export function AuthProvider({ children }) {
           } else {
             setUser(null);
             setIsAuthenticated(false);
+            setError(null);
           }
         }
       } catch (err) {
@@ -104,17 +105,29 @@ export function AuthProvider({ children }) {
     return result;
   }, []);
 
-  // Admin login action
+  // Admin login action — returns MFA challenge metadata without establishing an authenticated session
   const loginAdmin = useCallback(async ({ email, password }) => {
     setError(null);
     const result = await apiLoginAdmin({ email, password });
-    const { user: loggedInUser } = result;
 
-    setUser(loggedInUser);
-    setIsAuthenticated(true);
-    setError(null);
+    // Only establish authenticated session if user is returned and MFA is not required
+    if (result?.user && !result?.mfaRequired) {
+      setUser(result.user);
+      setIsAuthenticated(true);
+      setError(null);
+    }
 
     return result;
+  }, []);
+
+  // Complete admin session after successful MFA verification or enrollment activation
+  const completeAdminMfaSession = useCallback((authenticatedUser) => {
+    if (!authenticatedUser || typeof authenticatedUser !== 'object') {
+      return;
+    }
+    setUser(authenticatedUser);
+    setIsAuthenticated(true);
+    setError(null);
   }, []);
 
   // Register action
@@ -149,12 +162,13 @@ export function AuthProvider({ children }) {
       error,
       login,
       loginAdmin,
+      completeAdminMfaSession,
       register,
       logout,
       clearError,
       refreshUser,
     }),
-    [user, isAuthenticated, isLoading, error, login, loginAdmin, register, logout, clearError, refreshUser]
+    [user, isAuthenticated, isLoading, error, login, loginAdmin, completeAdminMfaSession, register, logout, clearError, refreshUser]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

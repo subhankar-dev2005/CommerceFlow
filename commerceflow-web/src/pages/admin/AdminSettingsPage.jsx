@@ -1,6 +1,7 @@
 /* global queueMicrotask, FileReader */
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { adminSettingsService as defaultSettingsService } from '../../features/admin/adminSettings.service.js';
+import { authService as defaultAuthService } from '../../features/auth/auth.service.js';
 import { useBranding } from '../../features/branding/useBranding.js';
 import { resolveLogoUrl } from '../../features/branding/branding.context.jsx';
 import AdminPageHeader from '../../layouts/admin/AdminPageHeader.jsx';
@@ -14,8 +15,11 @@ import { AdminLoadingState, AdminErrorState } from '../../layouts/admin/AdminShe
  */
 export default function AdminSettingsPage({
   settingsService: propSettingsService,
+  authService: propAuthService,
+  initialTab,
 }) {
   const service = propSettingsService || defaultSettingsService;
+  const auth = propAuthService || defaultAuthService;
   const { updateBranding } = useBranding();
 
   const [settings, setSettings] = useState({
@@ -46,7 +50,15 @@ export default function AdminSettingsPage({
     rateLimitWindowMinutes: 15,
   });
 
-  const [activeTab, setActiveTab] = useState('general');
+  const getInitialTab = () => {
+    if (initialTab) return initialTab;
+    if (typeof window !== 'undefined' && window.location?.pathname === '/admin/settings/security') {
+      return 'security';
+    }
+    return 'general';
+  };
+
+  const [activeTab, setActiveTab] = useState(getInitialTab);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -73,6 +85,306 @@ export default function AdminSettingsPage({
   const [isResettingAnnouncement, setIsResettingAnnouncement] = useState(false);
   const [showAnnouncementResetModal, setShowAnnouncementResetModal] = useState(false);
 
+  // Security & MFA state
+  const [mfaEnabled, setMfaEnabled] = useState(() => {
+    if (auth?.user && typeof auth.user.twoFactorEnabled === 'boolean') {
+      return auth.user.twoFactorEnabled;
+    }
+    return true;
+  });
+  const [adminPassword, setAdminPassword] = useState('');
+  const [stepUpMethod, setStepUpMethod] = useState('totp');
+  const [totpCode, setTotpCode] = useState('');
+  const [recoveryCode, setRecoveryCode] = useState('');
+  const [isRegeneratingCodes, setIsRegeneratingCodes] = useState(false);
+  const [regenError, setRegenError] = useState(null);
+  const [regenSuccess, setRegenSuccess] = useState(null);
+  const [networkAmbiguityWarning, setNetworkAmbiguityWarning] = useState(false);
+  const [transientRecoveryCodes, setTransientRecoveryCodes] = useState(null);
+  const [codesAcknowledged, setCodesAcknowledged] = useState(false);
+  const [copyFeedback, setCopyFeedback] = useState(null);
+  const [copyFailedManual, setCopyFailedManual] = useState(false);
+
+  // Enable MFA (Setup) modal state
+  const [showSetupModal, setShowSetupModal] = useState(false);
+  const [isInitiatingSetup, setIsInitiatingSetup] = useState(false);
+  const [setupData, setSetupData] = useState(null);
+  const [setupTotpCode, setSetupTotpCode] = useState('');
+  const [isActivatingMfa, setIsActivatingMfa] = useState(false);
+  const [setupError, setSetupError] = useState(null);
+
+  // Disable MFA modal state
+  const [showDisableModal, setShowDisableModal] = useState(false);
+  const [disablePassword, setDisablePassword] = useState('');
+  const [disableStepUpMethod, setDisableStepUpMethod] = useState('totp');
+  const [disableTotpCode, setDisableTotpCode] = useState('');
+  const [disableRecoveryCode, setDisableRecoveryCode] = useState('');
+  const [isDisablingMfa, setIsDisablingMfa] = useState(false);
+  const [disableError, setDisableError] = useState(null);
+  const [disableSuccess, setDisableSuccess] = useState(null);
+
+  useEffect(() => {
+    let isMounted = true;
+    if (typeof auth?.getCurrentUser === 'function') {
+      auth.getCurrentUser().then((res) => {
+        if (isMounted && res?.user) {
+          if (typeof res.user.twoFactorEnabled === 'boolean') {
+            setMfaEnabled(res.user.twoFactorEnabled);
+          }
+        }
+      }).catch(() => {});
+    } else if (auth?.user && typeof auth.user.twoFactorEnabled === 'boolean') {
+      setMfaEnabled(auth.user.twoFactorEnabled);
+    }
+    return () => { isMounted = false; };
+  }, [auth]);
+
+  useEffect(() => {
+    if (!transientRecoveryCodes || transientRecoveryCodes.length === 0 || codesAcknowledged) {
+      return;
+    }
+
+    const warningMessage =
+      'You have unacknowledged emergency recovery codes. If you leave now, these codes will be discarded and cannot be shown again. Are you sure you want to discard them?';
+
+    const handleBeforeUnload = (e) => {
+      e.preventDefault();
+      e.returnValue = '';
+      return '';
+    };
+
+    const handlePopState = (e) => {
+      const proceed = window.confirm(warningMessage);
+      if (!proceed) {
+        if (typeof e.stopImmediatePropagation === 'function') {
+          e.stopImmediatePropagation();
+        }
+        if (typeof e.preventDefault === 'function') {
+          e.preventDefault();
+        }
+      } else {
+        setTransientRecoveryCodes(null);
+      }
+    };
+
+    const handleAnchorClick = (e) => {
+      const anchor = e.target?.closest ? e.target.closest('a') : null;
+      if (!anchor) return;
+      const href = anchor.getAttribute('href');
+      if (!href || href.startsWith('#')) return;
+
+      const proceed = window.confirm(warningMessage);
+      if (!proceed) {
+        if (typeof e.preventDefault === 'function') {
+          e.preventDefault();
+        }
+        if (typeof e.stopPropagation === 'function') {
+          e.stopPropagation();
+        }
+      } else {
+        setTransientRecoveryCodes(null);
+        if (typeof window !== 'undefined' && window.history?.pushState) {
+          window.history.pushState(null, '', href);
+        }
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    window.addEventListener('popstate', handlePopState, true);
+    document.addEventListener('click', handleAnchorClick, true);
+
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      window.removeEventListener('popstate', handlePopState, true);
+      document.removeEventListener('click', handleAnchorClick, true);
+    };
+  }, [transientRecoveryCodes, codesAcknowledged]);
+
+  const handleCopyRecoveryCodes = async () => {
+    if (!transientRecoveryCodes || transientRecoveryCodes.length === 0) return;
+    const textToCopy = transientRecoveryCodes.join('\n');
+    try {
+      await navigator.clipboard.writeText(textToCopy);
+      setCopyFeedback('✓ Copied All Codes!');
+      setCopyFailedManual(false);
+      setTimeout(() => setCopyFeedback(null), 3000);
+    } catch {
+      setCopyFailedManual(true);
+      setCopyFeedback(null);
+    }
+  };
+
+  const handleDismissRecoveryCodes = () => {
+    if (!codesAcknowledged) return;
+    setTransientRecoveryCodes(null);
+    setCodesAcknowledged(false);
+    setRegenSuccess('New recovery codes successfully generated and saved.');
+  };
+
+  const handleRegenerateRecoveryCodes = async (e) => {
+    if (e && typeof e.preventDefault === 'function') {
+      e.preventDefault();
+    }
+    setRegenError(null);
+    setRegenSuccess(null);
+    setNetworkAmbiguityWarning(false);
+    setCopyFailedManual(false);
+
+    if (!adminPassword || !adminPassword.trim()) {
+      setRegenError('Current administrator password is required.');
+      return;
+    }
+
+    if (stepUpMethod === 'totp') {
+      if (!totpCode || !totpCode.trim()) {
+        setRegenError('A 6-digit authenticator code is required.');
+        return;
+      }
+      if (!/^\d{6}$/.test(totpCode.trim())) {
+        setRegenError('Please enter a valid 6-digit numeric authenticator code.');
+        return;
+      }
+    } else {
+      if (!recoveryCode || !recoveryCode.trim()) {
+        setRegenError('Recovery code is required.');
+        return;
+      }
+    }
+
+    setIsRegeneratingCodes(true);
+
+    try {
+      const payload = {
+        password: adminPassword,
+        ...(stepUpMethod === 'totp' ? { totpCode: totpCode.trim() } : { recoveryCode: recoveryCode.trim() }),
+      };
+
+      const res = await auth.regenerateAdminMfaRecoveryCodes(payload);
+      setTransientRecoveryCodes(res.recoveryCodes || []);
+      setCodesAcknowledged(false);
+      setAdminPassword('');
+      setTotpCode('');
+      setRecoveryCode('');
+    } catch (err) {
+      if (err?.code === 'INVALID_CURRENT_PASSWORD') {
+        setRegenError('Incorrect current password. Please verify your credentials and try again.');
+      } else if (err?.status === 429 || err?.code === 'AUTH_RATE_LIMIT_EXCEEDED') {
+        setRegenError('Too many attempts. Rate limit exceeded. Please wait a few minutes before trying again.');
+      } else if (
+        err?.status === 401 ||
+        err?.code === 'AUTH_TOKEN_EXPIRED' ||
+        err?.code === 'INVALID_AUTH_TOKEN' ||
+        err?.code === 'AUTH_TOKEN_REVOKED'
+      ) {
+        setRegenError('Your administrative session has expired or is invalid. Please sign in again.');
+      } else if (err?.status === 0 || err?.code === 'NETWORK_ERROR') {
+        setNetworkAmbiguityWarning(true);
+      } else {
+        setRegenError(err?.message || 'Failed to regenerate recovery codes.');
+      }
+    } finally {
+      setIsRegeneratingCodes(false);
+    }
+  };
+
+  const handleOpenSetupModal = async () => {
+    setShowSetupModal(true);
+    setSetupError(null);
+    setSetupTotpCode('');
+    setIsInitiatingSetup(true);
+    try {
+      const res = await auth.setupAdminMfa();
+      setSetupData(res);
+    } catch (err) {
+      setSetupError(err?.message || 'Failed to initiate MFA setup.');
+    } finally {
+      setIsInitiatingSetup(false);
+    }
+  };
+
+  const handleConfirmActivateMfa = async (e) => {
+    if (e && typeof e.preventDefault === 'function') e.preventDefault();
+    if (!setupTotpCode.trim() || !/^\d{6}$/.test(setupTotpCode.trim())) {
+      setSetupError('Please enter a valid 6-digit numeric authenticator code.');
+      return;
+    }
+
+    setIsActivatingMfa(true);
+    setSetupError(null);
+
+    try {
+      const res = await auth.activateAdminMfa({ totpCode: setupTotpCode.trim() });
+      setMfaEnabled(true);
+      setShowSetupModal(false);
+      setSetupData(null);
+      setSetupTotpCode('');
+      if (res?.recoveryCodes && res.recoveryCodes.length > 0) {
+        setTransientRecoveryCodes(res.recoveryCodes);
+        setCodesAcknowledged(false);
+      } else {
+        setRegenSuccess('Two-step verification successfully activated.');
+      }
+    } catch (err) {
+      setSetupError(err?.message || 'Failed to activate two-step verification.');
+    } finally {
+      setIsActivatingMfa(false);
+    }
+  };
+
+  const handleOpenDisableModal = () => {
+    setShowDisableModal(true);
+    setDisableError(null);
+    setDisablePassword('');
+    setDisableTotpCode('');
+    setDisableRecoveryCode('');
+    setDisableStepUpMethod('totp');
+  };
+
+  const handleConfirmDisableMfa = async (e) => {
+    if (e && typeof e.preventDefault === 'function') e.preventDefault();
+    setDisableError(null);
+
+    if (!disablePassword.trim()) {
+      setDisableError('Current administrator password is required.');
+      return;
+    }
+
+    if (disableStepUpMethod === 'totp') {
+      if (!disableTotpCode.trim() || !/^\d{6}$/.test(disableTotpCode.trim())) {
+        setDisableError('Please enter a valid 6-digit numeric authenticator code.');
+        return;
+      }
+    } else {
+      if (!disableRecoveryCode.trim()) {
+        setDisableError('Recovery code is required.');
+        return;
+      }
+    }
+
+    setIsDisablingMfa(true);
+
+    try {
+      const payload = {
+        password: disablePassword,
+        ...(disableStepUpMethod === 'totp'
+          ? { totpCode: disableTotpCode.trim() }
+          : { recoveryCode: disableRecoveryCode.trim() }),
+      };
+
+      await auth.disableAdminMfa(payload);
+      setMfaEnabled(false);
+      setShowDisableModal(false);
+      setDisableSuccess('Two-step verification has been disabled.');
+    } catch (err) {
+      if (err?.code === 'INVALID_CURRENT_PASSWORD') {
+        setDisableError('Incorrect current password. Please verify your credentials and try again.');
+      } else {
+        setDisableError(err?.message || 'Failed to disable two-step verification.');
+      }
+    } finally {
+      setIsDisablingMfa(false);
+    }
+  };
 
   const loadSettings = useCallback(async () => {
     setIsLoading(true);
@@ -511,6 +823,17 @@ export default function AdminSettingsPage({
               }`}
             >
               System Health & Diagnostics
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('security')}
+              className={`px-4 py-3 border-b-2 transition-colors whitespace-nowrap cursor-pointer ${
+                activeTab === 'security'
+                  ? 'border-[#123C32] text-[#123C32]'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              Security Settings
             </button>
           </div>
 
@@ -1370,8 +1693,276 @@ export default function AdminSettingsPage({
               </div>
             )}
 
+            {/* Security & MFA Settings */}
+            {activeTab === 'security' && (
+              <div className="bg-white rounded-2xl border border-[#E4E8E5] p-6 sm:p-8 space-y-6 shadow-2xs">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-100 gap-4">
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900">
+                      Administrator Security & MFA Recovery
+                    </h3>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Manage two-step verification and emergency backup credentials for administrative accounts.
+                    </p>
+                  </div>
+                  <div>
+                    {mfaEnabled ? (
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                        ● MFA Active & Enforced
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-800 border border-amber-200">
+                        ● Two-Factor Authentication Disabled
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Notifications */}
+                {regenSuccess && (
+                  <div role="status" className="p-4 rounded-xl text-xs font-semibold flex items-center justify-between bg-emerald-50 text-emerald-800 border border-emerald-200">
+                    <span>{regenSuccess}</span>
+                    <button type="button" onClick={() => setRegenSuccess(null)} className="text-emerald-700 hover:text-emerald-900 font-bold ml-4">&times;</button>
+                  </div>
+                )}
+                {disableSuccess && (
+                  <div role="status" className="p-4 rounded-xl text-xs font-semibold flex items-center justify-between bg-emerald-50 text-emerald-800 border border-emerald-200">
+                    <span>{disableSuccess}</span>
+                    <button type="button" onClick={() => setDisableSuccess(null)} className="text-emerald-700 hover:text-emerald-900 font-bold ml-4">&times;</button>
+                  </div>
+                )}
+                {regenError && (
+                  <div role="alert" className="p-4 rounded-xl text-xs font-semibold flex items-center justify-between bg-rose-50 text-rose-800 border border-rose-200">
+                    <span>{regenError}</span>
+                    <button type="button" onClick={() => setRegenError(null)} className="text-rose-700 hover:text-rose-900 font-bold ml-4">&times;</button>
+                  </div>
+                )}
+
+                {/* Network Ambiguity Warning Banner */}
+                {networkAmbiguityWarning && (
+                  <div role="alert" className="p-4 rounded-xl bg-amber-50 border-2 border-amber-300 text-amber-900 text-xs space-y-2">
+                    <div className="font-bold text-sm flex items-center gap-2">
+                      ⚠️ Network Ambiguity Warning — Do Not Retry
+                    </div>
+                    <p>
+                      The server did not respond before connection timeout. Old recovery codes may no longer be valid. Do NOT retry automatically. Please refresh the page and verify your account status.
+                    </p>
+                  </div>
+                )}
+
+                {/* Transient Recovery Codes One-Time View */}
+                {transientRecoveryCodes && transientRecoveryCodes.length > 0 && (
+                  <div className="p-5 rounded-2xl bg-slate-900 text-white space-y-4">
+                    <div className="flex items-center justify-between border-b border-slate-700 pb-3">
+                      <div>
+                        <h4 className="text-sm font-bold text-emerald-400">
+                          New Emergency Recovery Codes Generated
+                        </h4>
+                        <p className="text-xs text-slate-300 mt-0.5">
+                          All previous recovery codes are now permanently invalidated.
+                        </p>
+                      </div>
+                      <span className="px-2.5 py-1 rounded-lg text-xs font-mono font-bold bg-slate-800 text-slate-200 border border-slate-700">
+                        One-Time Emergency Backup Codes (8)
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 font-mono text-xs text-center py-2">
+                      {transientRecoveryCodes.map((code, idx) => (
+                        <div key={idx} className="p-2.5 rounded-xl bg-slate-800 text-emerald-300 border border-slate-700 select-all font-bold">
+                          {code}
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row items-center justify-between pt-3 border-t border-slate-700 gap-3">
+                      <div className="flex items-center gap-3">
+                        <button
+                          type="button"
+                          id="btn-copy-recovery-codes"
+                          onClick={handleCopyRecoveryCodes}
+                          className="px-4 py-2 rounded-xl text-xs font-semibold bg-emerald-600 text-white hover:bg-emerald-500 transition-colors cursor-pointer"
+                        >
+                          {copyFeedback || (copyFailedManual ? 'Copy Failed — Copy Manually' : 'Copy All Codes')}
+                        </button>
+                        {copyFailedManual && (
+                          <span className="text-[11px] text-amber-300">
+                            Automatic clipboard copy failed. Please select and copy the codes manually.
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-3">
+                        <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            id="ack-recovery-codes"
+                            checked={codesAcknowledged}
+                            onChange={(e) => setCodesAcknowledged(e.target.checked)}
+                            className="rounded border-slate-700 text-emerald-500 focus:ring-emerald-400"
+                          />
+                          <span>I have safely saved these recovery codes</span>
+                        </label>
+                        <button
+                          type="button"
+                          id="btn-dismiss-recovery-codes"
+                          disabled={!codesAcknowledged}
+                          onClick={handleDismissRecoveryCodes}
+                          className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-700 text-slate-200 hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                        >
+                          Done
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* If MFA is Enabled: Regenerate Section & Disable Action */}
+                {mfaEnabled ? (
+                  <div className="space-y-6">
+                    <div className="p-5 rounded-2xl border border-slate-200 bg-slate-50/60 space-y-4">
+                      <div>
+                        <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                          Regenerate Emergency Recovery Codes
+                        </h4>
+                        <p className="text-xs text-slate-500 mt-0.5">
+                          Generate 8 fresh emergency backup codes. Regenerating codes will immediately invalidate all previously issued backup codes.
+                        </p>
+                      </div>
+
+                      <div className="space-y-4">
+                        <div>
+                          <label htmlFor="current-password" className="block text-xs font-bold text-slate-700 mb-1">
+                            Current Administrator Password
+                          </label>
+                          <input
+                            id="current-password"
+                            type="password"
+                            value={adminPassword}
+                            onChange={(e) => setAdminPassword(e.target.value)}
+                            placeholder="Enter current password"
+                            className="w-full sm:max-w-md px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#123C32]/20 focus:border-[#123C32]"
+                          />
+                        </div>
+
+                        <div>
+                          <span className="block text-xs font-bold text-slate-700 mb-2">Step-Up Verification Method</span>
+                          <div className="flex items-center gap-4 text-xs font-semibold text-slate-700">
+                            <label className="flex items-center gap-1.5 cursor-pointer">
+                              <input
+                                type="radio"
+                                id="step-up-totp"
+                                name="stepUpMethod"
+                                value="totp"
+                                checked={stepUpMethod === 'totp'}
+                                onChange={() => setStepUpMethod('totp')}
+                              />
+                              <span>Authenticator App (TOTP)</span>
+                            </label>
+                            <label className="flex items-center gap-1.5 cursor-pointer">
+                              <input
+                                type="radio"
+                                id="step-up-recovery"
+                                name="stepUpMethod"
+                                value="recovery"
+                                checked={stepUpMethod === 'recovery'}
+                                onChange={() => setStepUpMethod('recovery')}
+                              />
+                              <span>Existing Recovery Code</span>
+                            </label>
+                          </div>
+                        </div>
+
+                        {stepUpMethod === 'totp' ? (
+                          <div>
+                            <label htmlFor="totp-code" className="block text-xs font-bold text-slate-700 mb-1">
+                              6-Digit Authenticator Code
+                            </label>
+                            <input
+                              id="totp-code"
+                              name="totpCode"
+                              type="text"
+                              maxLength={6}
+                              value={totpCode}
+                              onChange={(e) => setTotpCode(e.target.value)}
+                              placeholder="123456"
+                              className="w-full sm:max-w-xs px-3 py-2 text-xs font-mono tracking-widest bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#123C32]/20 focus:border-[#123C32]"
+                            />
+                          </div>
+                        ) : (
+                          <div>
+                            <label htmlFor="recovery-code" className="block text-xs font-bold text-slate-700 mb-1">
+                              Existing Unused Recovery Code
+                            </label>
+                            <input
+                              id="recovery-code"
+                              name="recoveryCode"
+                              type="text"
+                              value={recoveryCode}
+                              onChange={(e) => setRecoveryCode(e.target.value)}
+                              placeholder="2345-6789-ABCD-EFGH"
+                              className="w-full sm:max-w-md px-3 py-2 text-xs font-mono bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#123C32]/20 focus:border-[#123C32]"
+                            />
+                          </div>
+                        )}
+
+                        <div className="pt-2">
+                          <button
+                            type="button"
+                            onClick={handleRegenerateRecoveryCodes}
+                            disabled={isRegeneratingCodes}
+                            className="px-5 py-2.5 rounded-xl text-xs font-semibold bg-[#123C32] text-white hover:bg-[#0E332B] disabled:opacity-50 transition-colors shadow-xs cursor-pointer"
+                          >
+                            {isRegeneratingCodes ? 'Verifying & Regenerating...' : 'Regenerate Recovery Codes'}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Disable MFA Danger Section */}
+                    <div className="p-5 rounded-2xl border border-rose-200 bg-rose-50/40 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                      <div>
+                        <h4 className="text-xs font-bold text-rose-900 uppercase tracking-wider">
+                          Disable Two-Step Verification
+                        </h4>
+                        <p className="text-xs text-rose-700 mt-0.5">
+                          Disabling two-step verification reduces account protection. You will be able to sign in using only your password.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleOpenDisableModal}
+                        className="px-4 py-2 rounded-xl text-xs font-semibold bg-white border border-rose-300 text-rose-700 hover:bg-rose-50 transition-colors shrink-0 cursor-pointer"
+                      >
+                        Disable Two-Step Verification
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  /* If MFA is Disabled: Enable MFA Section */
+                  <div className="p-6 rounded-2xl border border-slate-200 bg-slate-50/60 space-y-4">
+                    <div className="space-y-1">
+                      <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                        Protect Your Administrative Account
+                      </h4>
+                      <p className="text-xs text-slate-600 max-w-xl leading-relaxed">
+                        Two-step verification adds an extra layer of security. In addition to your password, you will be required to provide a 6-digit verification code from your authenticator app (such as Google Authenticator) every time you sign in.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleOpenSetupModal}
+                      className="px-5 py-2.5 rounded-xl text-xs font-semibold bg-[#123C32] text-white hover:bg-[#0E332B] transition-colors shadow-xs cursor-pointer"
+                    >
+                      Enable Two-Step Verification
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Save Buttons Bar */}
-            {activeTab !== 'branding' && (
+            {activeTab !== 'branding' && activeTab !== 'security' && (
               <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100">
                 <button
                   type="button"
@@ -1391,6 +1982,193 @@ export default function AdminSettingsPage({
               </div>
             )}
           </form>
+        </div>
+      )}
+
+      {/* Enable MFA Setup Modal */}
+      {showSetupModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-5 shadow-xl">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="text-sm font-bold text-slate-900">
+                Setup Two-Step Verification
+              </h3>
+              <button
+                type="button"
+                onClick={() => { setShowSetupModal(false); setSetupData(null); }}
+                className="text-slate-400 hover:text-slate-600 font-bold"
+              >
+                &times;
+              </button>
+            </div>
+
+            {setupError && (
+              <div role="alert" className="p-3 rounded-xl bg-rose-50 text-rose-800 text-xs font-semibold">
+                {setupError}
+              </div>
+            )}
+
+            {isInitiatingSetup ? (
+              <div className="py-8 text-center text-xs text-slate-500 font-medium">
+                Generating authenticator key...
+              </div>
+            ) : setupData ? (
+              <div className="space-y-4 text-xs">
+                <div>
+                  <span className="font-bold text-slate-700 block mb-1">1. Add to Authenticator App</span>
+                  <p className="text-slate-500 mb-2">
+                    Enter the secret key below into your authenticator app (Google Authenticator, Authy, 1Password):
+                  </p>
+                  <div className="p-3 rounded-xl bg-slate-100 font-mono text-center font-bold tracking-widest text-slate-800 select-all border border-slate-200">
+                    {setupData.secret}
+                  </div>
+                </div>
+
+                <div>
+                  <label htmlFor="setup-totp-code" className="font-bold text-slate-700 block mb-1">
+                    2. Enter 6-Digit Verification Code
+                  </label>
+                  <input
+                    id="setup-totp-code"
+                    name="setupTotpCode"
+                    type="text"
+                    maxLength={6}
+                    value={setupTotpCode}
+                    onChange={(e) => setSetupTotpCode(e.target.value)}
+                    placeholder="123456"
+                    className="w-full px-3 py-2 text-xs font-mono tracking-widest text-center bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#123C32]/20 focus:border-[#123C32]"
+                  />
+                </div>
+
+                <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={() => { setShowSetupModal(false); setSetupData(null); }}
+                    className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleConfirmActivateMfa}
+                    disabled={isActivatingMfa}
+                    className="px-5 py-2 rounded-xl text-xs font-semibold bg-[#123C32] text-white hover:bg-[#0E332B] disabled:opacity-50 transition-colors shadow-xs cursor-pointer"
+                  >
+                    {isActivatingMfa ? 'Verifying...' : 'Verify & Activate'}
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      )}
+
+      {/* Disable MFA Confirmation Modal */}
+      {showDisableModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-5 shadow-xl">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="text-sm font-bold text-rose-900">
+                Disable Two-Step Verification
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowDisableModal(false)}
+                className="text-slate-400 hover:text-slate-600 font-bold"
+              >
+                &times;
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Please enter your current administrator password and your second factor to confirm disabling two-step verification.
+            </p>
+
+            {disableError && (
+              <div role="alert" className="p-3 rounded-xl bg-rose-50 text-rose-800 text-xs font-semibold">
+                {disableError}
+              </div>
+            )}
+
+            <div className="space-y-4 text-xs">
+              <div>
+                <label htmlFor="disable-password" className="block font-bold text-slate-700 mb-1">
+                  Current Administrator Password
+                </label>
+                <input
+                  id="disable-password"
+                  type="password"
+                  value={disablePassword}
+                  onChange={(e) => setDisablePassword(e.target.value)}
+                  placeholder="Enter current password"
+                  className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-600"
+                />
+              </div>
+
+              <div>
+                <span className="block font-bold text-slate-700 mb-1">Second Factor Verification</span>
+                <div className="flex items-center gap-4 text-xs font-semibold text-slate-700 mb-2">
+                  <label className="flex items-center gap-1.5 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="disableStepUp"
+                      value="totp"
+                      checked={disableStepUpMethod === 'totp'}
+                      onChange={() => setDisableStepUpMethod('totp')}
+                    />
+                    <span>Authenticator (TOTP)</span>
+                  </label>
+                  <label className="flex items-center gap-1.5 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="disableStepUp"
+                      value="recovery"
+                      checked={disableStepUpMethod === 'recovery'}
+                      onChange={() => setDisableStepUpMethod('recovery')}
+                    />
+                    <span>Recovery Code</span>
+                  </label>
+                </div>
+
+                {disableStepUpMethod === 'totp' ? (
+                  <input
+                    type="text"
+                    maxLength={6}
+                    value={disableTotpCode}
+                    onChange={(e) => setDisableTotpCode(e.target.value)}
+                    placeholder="6-digit authenticator code"
+                    className="w-full px-3 py-2 text-xs font-mono tracking-widest bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-600"
+                  />
+                ) : (
+                  <input
+                    type="text"
+                    value={disableRecoveryCode}
+                    onChange={(e) => setDisableRecoveryCode(e.target.value)}
+                    placeholder="Emergency recovery code"
+                    className="w-full px-3 py-2 text-xs font-mono bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-600"
+                  />
+                )}
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowDisableModal(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmDisableMfa}
+                  disabled={isDisablingMfa}
+                  className="px-5 py-2 rounded-xl text-xs font-semibold bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-50 transition-colors shadow-xs cursor-pointer"
+                >
+                  {isDisablingMfa ? 'Disabling...' : 'Confirm & Disable MFA'}
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

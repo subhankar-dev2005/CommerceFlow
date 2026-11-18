@@ -3,6 +3,7 @@ import request from "supertest";
 import { createApp } from "../../app.js";
 import User from "./user.model.js";
 import RefreshToken from "./refresh-token.model.js";
+import AdminMfaChallenge from "./admin-mfa-challenge.model.js";
 import bcrypt from "bcryptjs";
 import generateToken from "../../utils/generate-token.js";
 import {
@@ -15,12 +16,21 @@ import {
   REFRESH_COOKIE_NAME,
   REFRESH_COOKIE_PATH
 } from "../../config/cookie.js";
+import {
+  generateTotpSecret,
+  encryptMfaSecret,
+  generateTotpCode
+} from "../../utils/mfa-crypto.js";
+import { env } from "../../config/env.js";
+import { adminMfaVerifyRateLimitMiddleware } from "../../common/middleware/auth-rate-limit.middleware.js";
 
 describe("Refresh Token Controller & Authentication Integration Tests", () => {
   let app;
 
   beforeEach(() => {
     vi.restoreAllMocks();
+    adminMfaVerifyRateLimitMiddleware.resetKey("127.0.0.1");
+    adminMfaVerifyRateLimitMiddleware.resetKey("::ffff:127.0.0.1");
     app = createApp({ corsOrigin: "http://localhost:3000" });
   });
 
@@ -82,7 +92,7 @@ describe("Refresh Token Controller & Authentication Integration Tests", () => {
       expect(res.body.data?.refreshToken).toBeUndefined();
     });
 
-    it("A2. admin login sets dual cookies with audience: 'admin'", async () => {
+    it("A2. password-only admin login returns MFA challenge and does not issue session cookies or refresh tokens", async () => {
       const mockAdmin = {
         _id: "507f1f77bcf86cd799439012",
         name: "Admin User",
@@ -90,6 +100,7 @@ describe("Refresh Token Controller & Authentication Integration Tests", () => {
         role: "admin",
         isActive: true,
         tokenVersion: 0,
+        twoFactorEnabled: true,
         password: "hashed-password"
       };
 
@@ -112,12 +123,44 @@ describe("Refresh Token Controller & Authentication Integration Tests", () => {
         .send({ email: "admin@example.com", password: "AdminPassword123!" });
 
       expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data?.mfaRequired).toBe(false);
+      expect(res.body.data?.user?.role).toBe("admin");
+
+      // Verify Set-Cookie header contains both cookies
+      const setCookie = res.headers["set-cookie"];
+      expect(setCookie).toBeDefined();
+
+      const authCookie = setCookie.find((c) => c.startsWith(`${AUTH_COOKIE_NAME}=`));
+      const refreshCookie = setCookie.find((c) => c.startsWith(`${REFRESH_COOKIE_NAME}=`));
+
+      expect(authCookie).toBeDefined();
+      expect(authCookie).toContain("HttpOnly");
+      expect(authCookie).toContain("Path=/;");
+
+      expect(refreshCookie).toBeDefined();
+      expect(refreshCookie).toContain("HttpOnly");
+
+      // Invariant: RefreshToken document created with audience: 'admin'
       expect(createSpy).toHaveBeenCalledWith(
         expect.objectContaining({
           userId: mockAdmin._id,
           audience: "admin"
         })
       );
+    });
+
+    it("A2b. retired admin MFA endpoint returns 410 Gone with MFA_FEATURE_DISABLED", async () => {
+      const res = await request(app)
+        .post("/api/v1/users/admin/mfa/verify")
+        .send({
+          challengeToken: "a".repeat(64),
+          totpCode: "123456"
+        });
+
+      expect(res.status).toBe(410);
+      expect(res.body.success).toBe(false);
+      expect(res.body.error.code).toBe("MFA_FEATURE_DISABLED");
     });
   });
 

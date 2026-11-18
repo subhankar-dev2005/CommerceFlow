@@ -285,7 +285,7 @@ export default function App() {
     if (pathname === '/admin/vendors') {
       return <AdminVendorsPage />;
     }
-    if (pathname === '/admin/settings') {
+    if (pathname === '/admin/settings' || pathname.startsWith('/admin/settings/')) {
       return <AdminSettingsPage />;
     }
     if (pathname === '/admin/audit-logs') {

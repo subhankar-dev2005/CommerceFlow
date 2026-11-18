@@ -24,12 +24,15 @@ export const VALID_AUDIT_EVENT_TYPES = [
 
 // Active in-flight admin audit requests for deduplication
 const inFlightAuditRequests = new Map();
+const auditLogsCache = new Map();
+const AUDIT_CACHE_TTL_MS = 15000;
 
 /**
- * Clear in-flight admin audit requests (primarily for testing and reset handlers).
+ * Clear in-flight admin audit requests and cache (primarily for testing and reset handlers).
  */
 export function clearAdminAuditInFlightRequests() {
   inFlightAuditRequests.clear();
+  auditLogsCache.clear();
 }
 
 /**
@@ -48,9 +51,10 @@ export function clearAdminAuditInFlightRequests() {
  * @param {string} [params.endDate]
  * @param {Object} [options={}]
  * @param {AbortSignal} [options.signal]
+ * @param {boolean} [options.force=false]
  * @returns {Promise<{ auditLogs: Array<Object>, pagination: Object }>}
  */
-export async function getAdminAuditLogs(params = {}, { signal } = {}) {
+export async function getAdminAuditLogs(params = {}, { signal, force = false } = {}) {
   const queryParts = [];
 
   if (params && typeof params === 'object') {
@@ -116,6 +120,14 @@ export async function getAdminAuditLogs(params = {}, { signal } = {}) {
   const queryString = queryParts.length > 0 ? `?${queryParts.join('&')}` : '';
   const endpoint = `admin/audit-logs${queryString}`;
 
+  if (!force && auditLogsCache.has(endpoint)) {
+    const entry = auditLogsCache.get(endpoint);
+    if (Date.now() - entry.time < AUDIT_CACHE_TTL_MS) {
+      return entry.data;
+    }
+    auditLogsCache.delete(endpoint);
+  }
+
   if (inFlightAuditRequests.has(endpoint)) {
     return inFlightAuditRequests.get(endpoint);
   }
@@ -124,7 +136,7 @@ export async function getAdminAuditLogs(params = {}, { signal } = {}) {
     try {
       const response = await apiClient.get(endpoint, { signal });
 
-      return {
+      const result = {
         auditLogs: response?.data?.auditLogs || [],
         pagination: response?.data?.pagination || {
           page: 1,
@@ -135,6 +147,9 @@ export async function getAdminAuditLogs(params = {}, { signal } = {}) {
           hasPrevPage: false,
         },
       };
+
+      auditLogsCache.set(endpoint, { data: result, time: Date.now() });
+      return result;
     } finally {
       inFlightAuditRequests.delete(endpoint);
     }

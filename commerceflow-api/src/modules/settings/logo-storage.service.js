@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import { fileURLToPath } from "node:url";
 import AppError from "../../common/errors/app-error.js";
 
 /**
@@ -10,7 +11,22 @@ import AppError from "../../common/errors/app-error.js";
  * @returns {string}
  */
 export function getBrandingStorageDirectory() {
-  return path.resolve(process.cwd(), "uploads", "branding");
+  const cwdCandidate = path.resolve(process.cwd(), "uploads", "branding");
+  if (fs.existsSync(cwdCandidate)) {
+    return cwdCandidate;
+  }
+  const apiCwdCandidate = path.resolve(process.cwd(), "commerceflow-api", "uploads", "branding");
+  if (fs.existsSync(apiCwdCandidate)) {
+    return apiCwdCandidate;
+  }
+  const moduleRelative = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "../../../uploads/branding"
+  );
+  if (fs.existsSync(moduleRelative)) {
+    return moduleRelative;
+  }
+  return process.cwd().endsWith("commerceflow-api") ? cwdCandidate : moduleRelative;
 }
 
 /**

@@ -1,4 +1,5 @@
 import AdminAuditLog from "./admin-audit-log.model.js";
+import { env } from "../../config/env.js";
 import { logger } from "../../config/logger.js";
 import AppError from "../../common/errors/app-error.js";
 
@@ -23,7 +24,15 @@ export const AUDIT_EVENT_TYPES = Object.freeze({
   REFUND_FAILED: "REFUND_FAILED",
   REFUND_RETRY_REQUESTED: "REFUND_RETRY_REQUESTED",
   REFUND_RECONCILIATION_REQUIRED: "REFUND_RECONCILIATION_REQUIRED",
-  REFUND_RECONCILED: "REFUND_RECONCILED"
+  REFUND_RECONCILED: "REFUND_RECONCILED",
+  ADMIN_LOGIN_SUCCESS: "ADMIN_LOGIN_SUCCESS",
+  ADMIN_MFA_LOGIN_SUCCESS: "ADMIN_MFA_LOGIN_SUCCESS",
+  ADMIN_MFA_LOGIN_FAILED: "ADMIN_MFA_LOGIN_FAILED",
+  ADMIN_MFA_ENROLLED: "ADMIN_MFA_ENROLLED",
+  ADMIN_MFA_DISABLED: "ADMIN_MFA_DISABLED",
+  ADMIN_MFA_DISABLE_FAILED: "ADMIN_MFA_DISABLE_FAILED",
+  ADMIN_MFA_RECOVERY_CODES_REGENERATED: "ADMIN_MFA_RECOVERY_CODES_REGENERATED",
+  ADMIN_MFA_RECOVERY_CODES_REGENERATION_FAILED: "ADMIN_MFA_RECOVERY_CODES_REGENERATION_FAILED"
 });
 
 /**
@@ -317,11 +326,20 @@ export async function recordAdminAuditEvent({
   const ipAddress = extractClientIp(req);
   const userAgent = extractUserAgent(req);
 
-  // If running in unit test with disconnected database and unmocked AdminAuditLog
-  if (!AdminAuditLog.create._isMockFunction && AdminAuditLog.db?.readyState === 0) {
+  // Restrict in-memory fallback strictly to unit test environments with disconnected database and unmocked AdminAuditLog.
+  // In production or staging, database disconnection must fail closed to the catch block / throw, ensuring audit persistence
+  // failures are never masked as successful durable events.
+  const isTestEnvironment =
+    (process.env.NODE_ENV === "test" || env?.NODE_ENV === "test") &&
+    process.env.NODE_ENV !== "production" &&
+    process.env.NODE_ENV !== "staging" &&
+    env?.NODE_ENV !== "production" &&
+    env?.NODE_ENV !== "staging";
+
+  if (isTestEnvironment && !AdminAuditLog.create._isMockFunction && AdminAuditLog.db?.readyState === 0) {
     logger.debug(
       { eventType, actorUserId },
-      "Database disconnected and unmocked: returning in-memory audit log"
+      "Database disconnected and unmocked in test environment: returning in-memory audit log"
     );
     return {
       _id: "000000000000000000000000",
